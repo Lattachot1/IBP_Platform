@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # 1. Microsoft SQL Server 2022 Container
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: ube-ibp-mssql
+    restart: unless-stopped
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=YourStrong@Password!
+      - MSSQL_PID=Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - mssql-data:/var/opt/mssql
+      - ./init-db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Password!' -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - ube-ibp-network
+
+  # 2. Python FastAPI Model Service
+  model-service:
+    build:
+      context: ./model-service
+      dockerfile: Dockerfile
+    container_name: ube-ibp-model-service
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ube-ibp-network
+
+  # 3. Golang Backend Service
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ube-ibp-backend
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+      - DATABASE_URL=sqlserver://sa:YourStrong@Password!@mssql:1433?database=IBP_DB
+      - MODEL_SERVICE_URL=http://model-service:5000
+    depends_on:
+      mssql:
+        condition: service_healthy
+      model-service:
+        condition: service_healthy
+    networks:
+      - ube-ibp-network
+
+  # 4. Next.js Frontend (Executive Dashboard)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: ube-ibp-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8080
+    depends_on:
+      - backend
+    networks:
+      - ube-ibp-network
+
+volumes:
+  mssql-data:
+    driver: local
+
+networks:
+  ube-ibp-network:
+    driver: bridge
