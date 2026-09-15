@@ -45,6 +45,34 @@ interface ScenarioResult {
   created_at?: string;
 }
 
+interface RawMaterialForecastPoint {
+  target_month: string;
+  horizon: number;
+  point: number;
+  p025: number;
+  p10: number;
+  p50: number;
+  p90: number;
+  p975: number;
+  best_purchase_case: number;
+  base_case: number;
+  worst_purchase_case: number;
+}
+
+interface RawMaterialForecastResponse {
+  artifact_version: string;
+  symbol: string;
+  commodity: string;
+  market: string;
+  unit: string;
+  forecast_origin: string;
+  model_name: string;
+  validation_mae: number;
+  readiness: string;
+  scenario_interpretation: string;
+  forecasts: RawMaterialForecastPoint[];
+}
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 export default function IBPPlatformDashboard() {
@@ -60,6 +88,9 @@ export default function IBPPlatformDashboard() {
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
+  const [priceForecast, setPriceForecast] = useState<RawMaterialForecastResponse | null>(null);
+  const [isLoadingPrice, setIsLoadingPrice] = useState<boolean>(true);
+  const [priceForecastError, setPriceForecastError] = useState<string | null>(null);
 
   // Simulation Result State (Default initialized to Demand Surge without OT)
   const [currentResult, setCurrentResult] = useState<ScenarioResult>({
@@ -143,6 +174,27 @@ export default function IBPPlatformDashboard() {
       }
     } catch {
       setBackendOnline(false);
+    }
+  }, []);
+
+  const fetchRawMaterialForecast = useCallback(async () => {
+    setIsLoadingPrice(true);
+    setPriceForecastError(null);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/raw-material-price/forecast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: 'PA0033242', horizon_months: 4 })
+      });
+      if (!res.ok) {
+        throw new Error(`Forecast service returned ${res.status}`);
+      }
+      const data: RawMaterialForecastResponse = await res.json();
+      setPriceForecast(data);
+    } catch (err) {
+      setPriceForecastError(String(err));
+    } finally {
+      setIsLoadingPrice(false);
     }
   }, []);
 
@@ -230,7 +282,8 @@ export default function IBPPlatformDashboard() {
   useEffect(() => {
     checkBackendHealth();
     fetchScenarios();
-  }, [checkBackendHealth, fetchScenarios]);
+    fetchRawMaterialForecast();
+  }, [checkBackendHealth, fetchRawMaterialForecast, fetchScenarios]);
 
   // Run What-If Simulation
   const handleRunSimulation = async () => {
@@ -361,9 +414,19 @@ export default function IBPPlatformDashboard() {
   const capacityUtilizationPct = currentResult.capacity_limit > 0
     ? Math.min(100, Math.round((currentResult.actual_produce / currentResult.capacity_limit) * 100))
     : 0;
+  const priceDomain = priceForecast
+    ? {
+        min: Math.min(...priceForecast.forecasts.map((row) => row.p025)),
+        max: Math.max(...priceForecast.forecasts.map((row) => row.p975))
+      }
+    : null;
+  const pricePosition = (value: number) => {
+    if (!priceDomain || priceDomain.max === priceDomain.min) return 0;
+    return ((value - priceDomain.min) / (priceDomain.max - priceDomain.min)) * 100;
+  };
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-16 overflow-x-hidden">
       {/* Toast Notification */}
       {toastMessage && (
         <div className="fixed bottom-5 right-5 z-50 transition-all transform ease-out duration-300">
@@ -388,12 +451,12 @@ export default function IBPPlatformDashboard() {
       <header className="bg-gradient-to-r from-slate-950 via-slate-900 to-blue-950 text-white border-b border-slate-800 shadow-md">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 min-w-0">
               <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-inner font-black text-xl tracking-wider text-white">
                 UBE
               </div>
-              <div>
-                <div className="flex items-center gap-2">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white">
                     Integrated Business Planning (IBP) Platform
                   </h1>
@@ -401,7 +464,7 @@ export default function IBPPlatformDashboard() {
                     PoC v1.0
                   </span>
                 </div>
-                <p className="text-xs sm:text-sm text-slate-300 mt-0.5 flex items-center gap-2">
+                <p className="text-xs sm:text-sm text-slate-300 mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5">
                   <span className="text-blue-400 font-semibold">UBE Chemicals (Asia) PCL</span>
                   <span className="text-slate-500">•</span>
                   <span>"One Platform · One Data · One Plan"</span>
@@ -412,7 +475,7 @@ export default function IBPPlatformDashboard() {
             </div>
 
             {/* Status & Actions */}
-            <div className="flex items-center gap-3 self-end md:self-auto">
+            <div className="flex flex-wrap items-center gap-2 self-start md:self-auto">
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
                 <span
                   className={`w-2.5 h-2.5 rounded-full ${
@@ -442,7 +505,7 @@ export default function IBPPlatformDashboard() {
       </header>
 
       {/* Main Content Area */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+      <main className="max-w-7xl min-w-0 mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         {/* Benchmark Presets Bar (Capstone Slide 15) */}
         <section className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -472,9 +535,9 @@ export default function IBPPlatformDashboard() {
         </section>
 
         {/* Top Grid: Simulator Controls & Constraint Alert */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 min-w-0">
           {/* Simulator Controls Card */}
-          <div className="lg:col-span-5 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-between">
+          <div className="lg:col-span-5 min-w-0 bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex flex-col justify-between">
             <div>
               <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
                 <div className="flex items-center gap-2">
@@ -917,6 +980,138 @@ export default function IBPPlatformDashboard() {
               </div>
             </div>
           </div>
+        </section>
+
+        {/* Versioned raw-material forecast from the Python model service */}
+        <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="p-6 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-5 h-5 text-cyan-700" />
+                <h2 className="text-lg font-bold text-slate-800">Butadiene Price Outlook</h2>
+                <span className="text-[10px] font-bold uppercase px-2 py-1 rounded-md bg-amber-50 text-amber-700 border border-amber-200">
+                  Research prototype
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm text-slate-500 mt-1">
+                FOB Southeast Asia purchasing scenarios · four-month planning horizon
+              </p>
+            </div>
+            <button
+              onClick={fetchRawMaterialForecast}
+              disabled={isLoadingPrice}
+              title="Refresh raw-material forecast"
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 transition-colors disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isLoadingPrice ? 'animate-spin' : ''}`} />
+              <span>Refresh forecast</span>
+            </button>
+          </div>
+
+          {isLoadingPrice ? (
+            <div className="min-h-52 flex items-center justify-center text-sm text-slate-500">
+              <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+              Loading model artifact...
+            </div>
+          ) : priceForecastError || !priceForecast ? (
+            <div className="m-6 p-4 border border-rose-200 bg-rose-50 text-rose-800 rounded-lg flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+              <div>
+                <div className="text-sm font-semibold">Raw-material model service unavailable</div>
+                <div className="text-xs mt-1 text-rose-700">{priceForecastError}</div>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <div className="grid grid-cols-2 lg:grid-cols-4 border-b border-slate-200">
+                <div className="p-4 sm:p-5 border-r border-b lg:border-b-0 border-slate-200">
+                  <div className="text-[10px] font-bold uppercase text-slate-500">Market index</div>
+                  <div className="mt-1 text-sm font-bold text-slate-900">{priceForecast.symbol}</div>
+                  <div className="text-xs text-slate-500">{priceForecast.unit}</div>
+                </div>
+                <div className="p-4 sm:p-5 lg:border-r border-b lg:border-b-0 border-slate-200">
+                  <div className="text-[10px] font-bold uppercase text-slate-500">Selected model</div>
+                  <div className="mt-1 text-sm font-bold text-slate-900">{priceForecast.model_name}</div>
+                  <div className="text-xs text-slate-500">MAE {priceForecast.validation_mae.toFixed(1)} USD/t</div>
+                </div>
+                <div className="p-4 sm:p-5 border-r border-slate-200">
+                  <div className="text-[10px] font-bold uppercase text-slate-500">Data cutoff</div>
+                  <div className="mt-1 text-sm font-bold text-slate-900">{priceForecast.forecast_origin}</div>
+                  <div className="text-xs text-slate-500">Versioned artifact</div>
+                </div>
+                <div className="p-4 sm:p-5">
+                  <div className="text-[10px] font-bold uppercase text-slate-500">Base next month</div>
+                  <div className="mt-1 text-sm font-mono font-bold text-cyan-800">
+                    {priceForecast.forecasts[0].p50.toLocaleString(undefined, { maximumFractionDigits: 1 })}
+                  </div>
+                  <div className="text-xs text-slate-500">P50 · USD/t</div>
+                </div>
+              </div>
+
+              <div className="p-4 sm:p-6">
+                <div className="grid grid-cols-[72px_1fr] sm:grid-cols-[100px_1fr_280px] gap-x-4 gap-y-4 items-center">
+                  {priceForecast.forecasts.map((row) => {
+                    const left95 = pricePosition(row.p025);
+                    const right95 = pricePosition(row.p975);
+                    const left80 = pricePosition(row.p10);
+                    const right80 = pricePosition(row.p90);
+                    return (
+                      <React.Fragment key={row.target_month}>
+                        <div>
+                          <div className="text-sm font-bold text-slate-800">
+                            {new Date(`${row.target_month}T00:00:00Z`).toLocaleDateString('en-US', {
+                              month: 'short',
+                              year: 'numeric',
+                              timeZone: 'UTC'
+                            })}
+                          </div>
+                          <div className="text-[10px] text-slate-400">Horizon {row.horizon}</div>
+                        </div>
+                        <div className="relative h-8 bg-slate-100 rounded-md border border-slate-200" title={`95% range ${row.p025.toFixed(0)}–${row.p975.toFixed(0)} USD/t`}>
+                          <div
+                            className="absolute top-[14px] h-0.5 bg-slate-400"
+                            style={{ left: `${left95}%`, width: `${right95 - left95}%` }}
+                          />
+                          <div
+                            className="absolute top-2 h-4 bg-cyan-200 border border-cyan-500 rounded-sm"
+                            style={{ left: `${left80}%`, width: `${Math.max(1, right80 - left80)}%` }}
+                          />
+                          <div
+                            className="absolute top-1.5 w-1 h-5 bg-cyan-800 rounded-sm"
+                            style={{ left: `calc(${pricePosition(row.p50)}% - 2px)` }}
+                            title={`P50 ${row.p50.toFixed(1)} USD/t`}
+                          />
+                        </div>
+                        <div className="col-span-2 sm:col-span-1 grid grid-cols-3 gap-2 text-right font-mono">
+                          <div>
+                            <div className="text-[10px] uppercase text-emerald-700">Low P10</div>
+                            <div className="text-xs font-bold text-slate-800">{row.p10.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase text-cyan-700">Base P50</div>
+                            <div className="text-xs font-bold text-slate-800">{row.p50.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div>
+                          </div>
+                          <div>
+                            <div className="text-[10px] uppercase text-rose-700">High P90</div>
+                            <div className="text-xs font-bold text-slate-800">{row.p90.toLocaleString(undefined, { maximumFractionDigits: 1 })}</div>
+                          </div>
+                        </div>
+                      </React.Fragment>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="px-4 sm:px-6 py-4 bg-amber-50 border-t border-amber-200 flex items-start gap-3">
+                <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <p className="text-xs leading-relaxed text-amber-900">
+                  P10/P50/P90 describe low, median, and high purchasing-price cases. Sales-price pass-through,
+                  freight, FX, and profit optimization are not included in this artifact. Prediction intervals
+                  are exploratory and are not procurement guarantees.
+                </p>
+              </div>
+            </div>
+          )}
         </section>
 
         {/* Audit Trail & Scenario Comparison Table */}

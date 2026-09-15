@@ -1,0 +1,66 @@
+{
+  "artifact_version": "2026-09-13-autoets12-v1",
+  "symbol": "PA0033242",
+  "commodity": "Butadiene",
+  "market": "FOB Southeast Asia",
+  "unit": "USD/t",
+  "forecast_origin": "2026-08-31",
+  "model_name": "AutoETS12",
+  "validation_mae": 200.615,
+  "readiness": "Research prototype; interval coverage is below nominal and is not validated for procurement commitments.",
+  "scenario_interpretation": "P10 is the low-price purchasing case, P50 is the base median, and P90 is the high-price purchasing case. These are predictive quantiles, not guarantees.",
+  "forecasts": [
+    {
+      "target_month": "2026-09-30",
+      "horizon": 1,
+      "point": 1422.47,
+      "p025": 1018.68,
+      "p10": 1259.72,
+      "p50": 1411.24,
+      "p90": 1637.13,
+      "p975": 1802.55,
+      "best_purchase_case": 1259.72,
+      "base_case": 1411.24,
+      "worst_purchase_case": 1637.13
+    },
+    {
+      "target_month": "2026-10-31",
+      "horizon": 2,
+      "point": 1422.47,
+      "p025": 815.54,
+      "p10": 1080.80,
+      "p50": 1401.49,
+      "p90": 1807.62,
+      "p975": 2413.35,
+      "best_purchase_case": 1080.80,
+      "base_case": 1401.49,
+      "worst_purchase_case": 1807.62
+    },
+    {
+      "target_month": "2026-11-30",
+      "horizon": 3,
+      "point": 1422.47,
+      "p025": 544.24,
+      "p10": 1112.70,
+      "p50": 1427.47,
+      "p90": 1907.75,
+      "p975": 2611.35,
+      "best_purchase_case": 1112.70,
+      "base_case": 1427.47,
+      "worst_purchase_case": 1907.75
+    },
+    {
+      "target_month": "2026-12-31",
+      "horizon": 4,
+      "point": 1422.47,
+      "p025": 533.88,
+      "p10": 1115.04,
+      "p50": 1444.37,
+      "p90": 1877.30,
+      "p975": 2816.83,
+      "best_purchase_case": 1115.04,
+      "base_case": 1444.37,
+      "worst_purchase_case": 1877.30
+    }
+  ]
+}

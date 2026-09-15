@@ -75,12 +75,12 @@ const (
 
 // Global database handle (nil if running in in-memory fallback mode)
 var (
-	db                 *sql.DB
-	modelServiceURL    string
-	dbMutex            sync.RWMutex
-	inMemoryScenarios  []Scenario
-	nextInMemID        = 4
-	httpClient         = &http.Client{Timeout: 5 * time.Second}
+	db                *sql.DB
+	modelServiceURL   string
+	dbMutex           sync.RWMutex
+	inMemoryScenarios []Scenario
+	nextInMemID       = 4
+	httpClient        = &http.Client{Timeout: 5 * time.Second}
 )
 
 func init() {
@@ -238,6 +238,60 @@ func fetchForecast(baseDemand, demandChangePct float64) (float64, float64, float
 	return forecast, lower, upper, "Ensemble Baseline (ETS/ML - Direct Engine)"
 }
 
+// handleRawMaterialPriceForecast proxies the versioned forecast artifact from
+// the Python model service. It deliberately has no fabricated local fallback.
+func handleRawMaterialPriceForecast(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		http.Error(w, "Could not read forecast request", http.StatusBadRequest)
+		return
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		body = []byte(`{"symbol":"PA0033242","horizon_months":4}`)
+	}
+
+	targetURL := modelServiceURL
+	if targetURL == "" {
+		targetURL = "http://localhost:5000"
+	}
+	endpoint := fmt.Sprintf(
+		"%s/api/v1/raw-material-price/forecast",
+		strings.TrimRight(targetURL, "/"),
+	)
+	modelReq, err := http.NewRequestWithContext(
+		r.Context(),
+		http.MethodPost,
+		endpoint,
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		http.Error(w, "Could not create model-service request", http.StatusInternalServerError)
+		return
+	}
+	modelReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(modelReq)
+	if err != nil {
+		http.Error(w, "Raw-material forecast service is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil {
+		http.Error(w, "Could not read model-service response", http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(responseBody)
+}
+
 // corsMiddleware injects CORS headers for cross-origin frontend support
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -249,7 +303,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		next.ServeHTTP(w)
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -446,8 +500,8 @@ func handleGetScenarios(w http.ResponseWriter, r *http.Request) {
 				)
 				if err == nil {
 					// enrich bounds for UI display
-					s.LowerBound = math.Round(s.ForecastDemand * 0.95 * 100) / 100
-					s.UpperBound = math.Round(s.ForecastDemand * 1.05 * 100) / 100
+					s.LowerBound = math.Round(s.ForecastDemand*0.95*100) / 100
+					s.UpperBound = math.Round(s.ForecastDemand*1.05*100) / 100
 					s.ModelName = "Ensemble Baseline (ETS/ML)"
 					list = append(list, s)
 				}
@@ -508,17 +562,17 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":         "healthy",
-		"service":        "UBE IBP Go Backend Engine",
-		"version":        "1.0.0",
-		"timestamp":      time.Now(),
-		"database":       dbStatus,
-		"model_service":  modelStatus,
+		"status":        "healthy",
+		"service":       "UBE IBP Go Backend Engine",
+		"version":       "1.0.0",
+		"timestamp":     time.Now(),
+		"database":      dbStatus,
+		"model_service": modelStatus,
 		"planning_rules": map[string]interface{}{
-			"normal_capacity":     NormalCapacityLimit,
-			"overtime_capacity":   OvertimeExtraCapacity,
-			"overtime_cost_thb":   OvertimeCostTHB,
-			"product_price_thb":   ProductUnitPriceTHB,
+			"normal_capacity":   NormalCapacityLimit,
+			"overtime_capacity": OvertimeExtraCapacity,
+			"overtime_cost_thb": OvertimeCostTHB,
+			"product_price_thb": ProductUnitPriceTHB,
 		},
 	})
 }
@@ -547,6 +601,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/health", handleHealth)
 	mux.HandleFunc("/api/simulate", handleSimulate)
+	mux.HandleFunc("/api/raw-material-price/forecast", handleRawMaterialPriceForecast)
 	mux.HandleFunc("/api/scenarios/save", handleSaveScenario)
 	mux.HandleFunc("/api/scenarios", handleGetScenarios)
 

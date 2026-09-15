@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
 */node_modules/
-package-lock.json
 
 # Next.js Build Outputs
 .next/
@@ -17,6 +16,8 @@ __pycache__/
 *$py.class
 *.so
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -50,3 +51,11 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+*.tsbuildinfo
+
+# Company data and local forecasting caches
+*.xlsx
+*.xls
+data/
+.model_cache/
+model-service/.model_cache/

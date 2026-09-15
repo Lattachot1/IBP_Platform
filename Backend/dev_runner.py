@@ -10,7 +10,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from typing import List, Optional
 import datetime
+import json
 import math
+import os
+import urllib.error
+import urllib.request
 
 app = FastAPI(
     title="UBE IBP Backend Simulation Engine (Dev Runner)",
@@ -21,7 +25,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -38,6 +42,10 @@ class SimulateRequest(BaseModel):
     demand_change_pct: float = 20.0
     enable_ot: bool = False
     created_by: str = "Planner (Interactive)"
+
+class RawMaterialForecastRequest(BaseModel):
+    symbol: str = "PA0033242"
+    horizon_months: int = Field(default=4, ge=1, le=4)
 
 class Scenario(BaseModel):
     scenario_id: Optional[int] = None
@@ -187,6 +195,24 @@ def simulate(req: SimulateRequest):
         created_by=req.created_by,
         created_at=datetime.datetime.now(datetime.timezone.utc).isoformat()
     )
+
+@app.post("/api/raw-material-price/forecast")
+def raw_material_price_forecast(req: RawMaterialForecastRequest):
+    model_service_url = os.getenv("MODEL_SERVICE_URL", "http://localhost:5000").rstrip("/")
+    request = urllib.request.Request(
+        f"{model_service_url}/api/v1/raw-material-price/forecast",
+        data=json.dumps(req.model_dump()).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Raw-material forecast service is unavailable: {exc}",
+        ) from exc
 
 @app.post("/api/scenarios/save", response_model=Scenario, status_code=201)
 def save_scenario(sc: Scenario):

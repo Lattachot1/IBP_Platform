@@ -29,13 +29,13 @@ IBP_Platform/
 │   ├── Dockerfile                 # Python 3.10-slim container image
 │   ├── requirements.txt           # fastapi, uvicorn, pydantic
 │   └── main.py                    # FastAPI Service: POST /api/v1/forecast (Confidence Intervals)
-├── backend/
+├── Backend/
 │   ├── Dockerfile                 # Multi-stage Golang container build
 │   ├── go.mod                     # Go 1.22 module definition
 │   ├── go.sum                     # Checksums for github.com/microsoft/go-mssqldb
 │   ├── main.go                    # Go Simulation & Constraint Engine (MS SQL & In-Memory Fallback)
 │   └── dev_runner.py              # Optional Python Dev Runner บน Port 8080 สำหรับรันเทสทันที
-└── frontend/
+└── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
     ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React
     ├── tsconfig.json
@@ -58,7 +58,7 @@ IBP_Platform/
 
 #### 1.1 รัน Frontend (Next.js - Port 3000)
 ```powershell
-cd frontend
+cd Frontend
 # ติดตั้ง dependencies (หากยังไม่ได้รัน)
 npm install
 
@@ -73,12 +73,12 @@ npm run dev
 
 - **ผ่าน Go (หากมี Go ติดตั้งในเครื่อง):**
   ```powershell
-  cd backend
+  cd Backend
   go run main.go
   ```
 - **หรือผ่าน Python Dev Runner (ทดสอบได้ทันทีบนเครื่องของคุณ):**
   ```powershell
-  cd backend
+  cd Backend
   python dev_runner.py
   ```
 Backend จะเริ่มทำงานที่ **`http://localhost:8080`**
@@ -97,6 +97,8 @@ Model Service จะเริ่มทำงานที่ **`http://localhost:
 เมื่อเปิดใช้งาน Docker Desktop บนเครื่องของคุณ สามารถสั่งรันทุกเซอร์วิสพร้อม MS SQL 2022 ด้วยคำสั่งเดียว:
 
 ```bash
+cp .env.example .env
+# แก้ MSSQL_SA_PASSWORD และ DATABASE_URL ใน .env ก่อนรัน
 docker compose up -d --build
 ```
 
@@ -104,7 +106,7 @@ docker compose up -d --build
 - **Frontend Dashboard:** `http://localhost:3000`
 - **Go Backend API:** `http://localhost:8080`
 - **FastAPI Model Service:** `http://localhost:5000` (Swagger docs ที่ `http://localhost:5000/docs`)
-- **MS SQL Server 2022:** `localhost:1433` (User: `sa`, Password: `YourStrong@Password!`, Database: `IBP_DB`)
+- **MS SQL Server 2022:** `localhost:1433` (User: `sa`, Database: `IBP_DB`; password มาจาก `.env`)
 
 ---
 
@@ -132,10 +134,30 @@ docker compose up -d --build
 
 ### Go Backend (`:8080`)
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
+- `POST /api/raw-material-price/forecast` — ส่งต่อคำขอ Butadiene forecast ไปยัง Model Service
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด
 - `GET /api/health` — ตรวจสอบสถานะ Backend, Database, และ Model Service
 
 ### Model Service (`:5000`)
 - `POST /api/v1/forecast` — รับ `base_demand` และ `demand_change_pct` ส่งกลับค่า Forecast และ Confidence Interval (±5%)
+- `POST /api/v1/raw-material-price/forecast` — คืน Butadiene P10/P50/P90 และ prediction intervals 4 เดือน
+- `GET /api/v1/raw-material-price/forecast` — อ่าน forecast artifact เดียวกันผ่าน query parameters
 - `GET /health` — Health check endpoint
+
+## Butadiene forecast integration
+
+Raw-material API โหลดผลจาก `model-service/artifacts/butadiene_forecast.json` หนึ่งครั้งตอนเริ่มใช้งาน
+แทนการ train และ backtest ทุกครั้งที่หน้าเว็บเรียก API ตัว artifact เก็บเฉพาะผล forecast,
+model version, data cutoff และ readiness warning โดยไม่รวม Excel หรือข้อมูลประวัติของบริษัท
+
+ผลรอบปัจจุบันมาจาก `AutoETS12` ที่เลือกด้วย expanding-window validation และครอบคลุม
+September-December 2026 คำว่า best/base/worst หมายถึงกรณีราคาซื้อ P10/P50/P90 เท่านั้น
+ยังไม่รวมราคาขาย, freight, FX หรือ profit optimization
+
+ทดสอบ Model Service:
+
+```powershell
+cd model-service
+python -m unittest -v test_main.py
+```

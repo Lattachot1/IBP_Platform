@@ -18,9 +18,16 @@ body {
     rgb(var(--background-start-rgb));
   min-height: 100vh;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 @layer utilities {
+  .flex > *,
+  .grid > * {
+    min-width: 0;
+  }
+
   .text-balance {
     text-wrap: balance;
   }
