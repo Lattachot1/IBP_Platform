@@ -24,27 +24,10 @@ services:
     networks:
       - ube-ibp-network
 
-  # 2. Python FastAPI Model Service
-  model-service:
-    build:
-      context: ./model-service
-      dockerfile: Dockerfile
-    container_name: ube-ibp-model-service
-    restart: unless-stopped
-    ports:
-      - "5000:5000"
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-    networks:
-      - ube-ibp-network
-
-  # 3. Golang Backend Service
+  # 2. Unified Python Backend (Simulation & Constraint Engine + Forecasting Engine)
   backend:
     build:
-      context: ./backend
+      context: ./Backend
       dockerfile: Dockerfile
     container_name: ube-ibp-backend
     restart: unless-stopped
@@ -53,19 +36,16 @@ services:
     environment:
       - PORT=8080
       - DATABASE_URL=sqlserver://sa:YourStrong@Password!@mssql:1433?database=IBP_DB
-      - MODEL_SERVICE_URL=http://model-service:5000
     depends_on:
       mssql:
-        condition: service_healthy
-      model-service:
         condition: service_healthy
     networks:
       - ube-ibp-network
 
-  # 4. Next.js Frontend (Executive Dashboard)
+  # 3. Next.js Frontend (Executive Dashboard)
   frontend:
     build:
-      context: ./frontend
+      context: ./Frontend
       dockerfile: Dockerfile
     container_name: ube-ibp-frontend
     restart: unless-stopped

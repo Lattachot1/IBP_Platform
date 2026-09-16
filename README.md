@@ -21,21 +21,17 @@
 
 ```
 IBP_Platform/
-├── docker-compose.yml             # Full-stack Docker orchestration (MS SQL, Model, Backend, Frontend)
+├── docker-compose.yml             # Full-stack Docker orchestration (MS SQL, Backend, Frontend)
 ├── README.md                      # คู่มือระบบและคำสั่งเริ่มต้น
 ├── init-db/
 │   └── 01-init.sql                # T-SQL Script สร้าง Database IBP_DB, Scenarios Table และ Seed Data
-├── model-service/
-│   ├── Dockerfile                 # Python 3.10-slim container image
-│   ├── requirements.txt           # fastapi, uvicorn, pydantic
-│   └── main.py                    # FastAPI Service: POST /api/v1/forecast (Confidence Intervals)
-├── backend/
-│   ├── Dockerfile                 # Multi-stage Golang container build
-│   ├── go.mod                     # Go 1.22 module definition
-│   ├── go.sum                     # Checksums for github.com/microsoft/go-mssqldb
-│   ├── main.go                    # Go Simulation & Constraint Engine (MS SQL & In-Memory Fallback)
-│   └── dev_runner.py              # Optional Python Dev Runner บน Port 8080 สำหรับรันเทสทันที
-└── frontend/
+├── Backend/                       # Unified Python Backend (FastAPI)
+│   ├── Dockerfile                 # Python 3.12-slim container image
+│   ├── requirements.txt           # fastapi, uvicorn, pydantic, pymssql
+│   ├── main.py                    # Simulation & Constraint Engine + REST API (MS SQL & In-Memory Fallback)
+│   ├── forecasting.py             # In-process Forecasting Engine (รวม model-service เดิมไว้ภายใน)
+│   └── database.py                # MS SQL Access Layer (pymssql) พร้อม In-Memory Fallback
+└── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
     ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React
     ├── tsconfig.json
@@ -58,7 +54,7 @@ IBP_Platform/
 
 #### 1.1 รัน Frontend (Next.js - Port 3000)
 ```powershell
-cd frontend
+cd Frontend
 # ติดตั้ง dependencies (หากยังไม่ได้รัน)
 npm install
 
@@ -69,26 +65,17 @@ npm run dev
 *(หมายเหตุ: หน้า Dashboard มีระบบ Direct Simulation Engine ในตัว แม้ยังไม่ได้เปิด Backend หน้าเว็บก็สามารถจำลองสถานการณ์และคำนวณผลลัพธ์ได้อย่างแม่นยำ)*
 
 #### 1.2 รัน Backend Service (Port 8080)
-คุณสามารถเลือกใช้ Go Backend หรือ Python Dev Runner:
-
-- **ผ่าน Go (หากมี Go ติดตั้งในเครื่อง):**
-  ```powershell
-  cd backend
-  go run main.go
-  ```
-- **หรือผ่าน Python Dev Runner (ทดสอบได้ทันทีบนเครื่องของคุณ):**
-  ```powershell
-  cd backend
-  python dev_runner.py
-  ```
-Backend จะเริ่มทำงานที่ **`http://localhost:8080`**
-
-#### 1.3 รัน Model Service (Python FastAPI - Port 5000 - ตัวเลือกเพิ่มเติม)
 ```powershell
-cd model-service
+cd Backend
+pip install -r requirements.txt
 python main.py
 ```
-Model Service จะเริ่มทำงานที่ **`http://localhost:5000`**
+Backend จะเริ่มทำงานที่ **`http://localhost:8080`**
+*(หากไม่ได้ตั้งค่าฐานข้อมูล ระบบจะใช้ In-Memory Fallback Store อัตโนมัติ)*
+
+#### 1.3 Forecasting Engine (รวมอยู่ใน Backend แล้ว)
+Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเข้ากับ Backend เป็นบริการ Python บริการเดียว
+ดู Swagger docs ได้ที่ **`http://localhost:8080/docs`**
 
 ---
 
@@ -102,8 +89,7 @@ docker compose up -d --build
 
 **Services ที่จะถูกเปิดใช้งาน:**
 - **Frontend Dashboard:** `http://localhost:3000`
-- **Go Backend API:** `http://localhost:8080`
-- **FastAPI Model Service:** `http://localhost:5000` (Swagger docs ที่ `http://localhost:5000/docs`)
+- **Python Backend API (รวม Forecasting Engine):** `http://localhost:8080` (Swagger docs ที่ `http://localhost:8080/docs`)
 - **MS SQL Server 2022:** `localhost:1433` (User: `sa`, Password: `YourStrong@Password!`, Database: `IBP_DB`)
 
 ---
@@ -130,12 +116,9 @@ docker compose up -d --build
 
 ## 📡 สรุป API Endpoints
 
-### Go Backend (`:8080`)
+### Python Backend (`:8080` — รวม Forecasting Engine ไว้ภายใน)
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด
-- `GET /api/health` — ตรวจสอบสถานะ Backend, Database, และ Model Service
-
-### Model Service (`:5000`)
-- `POST /api/v1/forecast` — รับ `base_demand` และ `demand_change_pct` ส่งกลับค่า Forecast และ Confidence Interval (±5%)
-- `GET /health` — Health check endpoint
+- `GET /api/health` — ตรวจสอบสถานะ Backend และ Database
+- Swagger docs — `http://localhost:8080/docs`

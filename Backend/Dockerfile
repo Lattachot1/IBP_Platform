@@ -1,28 +1,14 @@
-# Multi-stage build for Go backend
-FROM golang:1.22-alpine AS builder
+# UBE IBP Platform - Unified Python Backend (FastAPI)
+# Simulation & Constraint Engine + in-process Forecasting Engine
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install git and ca-certificates for fetching dependencies
-RUN apk add --no-cache git ca-certificates
-
-COPY go.mod go.sum ./
-RUN go mod download
+# Install dependencies first for better layer caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o ube-backend main.go
-
-# Production stage
-FROM alpine:3.19
-
-WORKDIR /app
-
-RUN apk add --no-cache ca-certificates tzdata
-ENV TZ=Asia/Bangkok
-
-COPY --from=builder /app/ube-backend /app/ube-backend
-
 EXPOSE 8080
-
-CMD ["/app/ube-backend"]
+CMD ["python", "main.py"]

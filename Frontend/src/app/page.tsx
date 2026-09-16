@@ -256,7 +256,7 @@ export default function IBPPlatformDashboard() {
         if (res.ok) {
           result = await res.json();
           setBackendOnline(true);
-          showToast('Simulation calculated successfully via Go Backend Engine!', 'success');
+          showToast('Simulation calculated successfully via Backend Engine!', 'success');
         } else {
           throw new Error('Backend failed');
         }
@@ -1072,7 +1072,7 @@ export default function IBPPlatformDashboard() {
       {/* Footer */}
       <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 mt-8 border-t border-slate-200 text-center text-xs text-slate-400 space-y-1">
         <p>AI-Driven Integrated Business Planning (IBP) Simulation Platform • UBE Chemicals (Asia) PCL</p>
-        <p>Built with Next.js App Router, Go Backend Engine, Python Model Service, and MS SQL Server 2022</p>
+        <p>Built with Next.js App Router, Unified Python Backend (FastAPI), and MS SQL Server 2022</p>
       </footer>
     </div>
   );
