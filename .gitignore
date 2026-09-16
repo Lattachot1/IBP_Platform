@@ -35,6 +35,9 @@ mssql-data/
 *.mdf
 *.ldf
 
+# Real client data (UBE/TSL) - never commit
+DemandModel/
+
 # Logs
 *.log
 npm-debug.log*
@@ -50,3 +53,4 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+docs/architecture-flow.html

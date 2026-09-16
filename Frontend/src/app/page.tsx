@@ -22,6 +22,8 @@ import {
   Sparkles,
   Info
 } from 'lucide-react';
+import { DemandForecastPanel } from '../components/DemandForecastPanel';
+import { ModelPerformancePanel } from '../components/ModelPerformancePanel';
 
 // Data Interfaces
 interface ScenarioResult {
@@ -918,6 +920,10 @@ export default function IBPPlatformDashboard() {
             </div>
           </div>
         </section>
+
+        {/* AI Demand Forecast (real billing data) */}
+        <DemandForecastPanel />
+        <ModelPerformancePanel />
 
         {/* Audit Trail & Scenario Comparison Table */}
         <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">

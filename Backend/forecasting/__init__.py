@@ -1,20 +1,17 @@
 """
-AI-Driven Integrated Business Planning (IBP) Platform
-Forecasting Engine (in-process, migrated from the standalone model-service)
+Forecasting package for the IBP platform (UBE Chemicals / TSL).
 
-Prepared for UBE Chemicals (Asia) PCL
-
-The public function mirrors the signature of the old Go `fetchForecast`
-helper so the What-if computation stays identical. One deliberate
-difference from the old Go service: the offline-fallback identifier
-"Ensemble Baseline (ETS/ML - Direct Engine)" is retired, because the
-forecasting engine now runs in-process and is always reachable - the
-success-path model name below is reported unconditionally.
+`__init__` keeps the legacy fallback engine exactly as it was in
+forecasting.py, so Backend/main.py keeps importing the same names from
+the same place. The real demand-forecasting models live in the
+submodules (data / models / backtest) and are only imported when the
+forecast feature actually runs, so the pure What-if flow never needs
+pandas or statsmodels.
 """
 
 import math
 
-# Model identifier reported to the audit trail and the dashboard
+# Legacy model identifier reported to the audit trail and the dashboard
 MODEL_NAME = "Ensemble Baseline (ETS/ML)"
 
 
@@ -42,6 +39,12 @@ def generate_forecast(base_demand: float, demand_change_pct: float) -> tuple:
     Legacy Ensemble Baseline (ETS/ML) placeholder logic, carried over
     verbatim from the Go direct engine and the original model-service:
     linear uplift on the base demand with a fixed +-5% band.
+
+    One deliberate difference from the old Go service: the offline-fallback
+    identifier "Ensemble Baseline (ETS/ML - Direct Engine)" is retired,
+    because the forecasting engine now runs in-process and is always
+    reachable - the success-path model name below is reported
+    unconditionally.
 
     Returns:
         (forecast, lower_bound, upper_bound, model_name)
