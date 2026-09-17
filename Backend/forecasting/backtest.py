@@ -17,11 +17,12 @@ Run:  cd Backend && python -m forecasting.backtest
 import numpy as np
 
 from . import data
-from .models import forecast_ets, forecast_seasonal_naive
+from .models import forecast_ets, forecast_sarima, forecast_seasonal_naive
 
 MODELS = {
     "SeasonalNaive(m=12)": forecast_seasonal_naive,
     "Holt-Winters(ETS damped)": forecast_ets,
+    "SARIMA(1,0,1)(1,1,1,12)": forecast_sarima,
 }
 MIN_TRAIN_MONTHS = 24
 

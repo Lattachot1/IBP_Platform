@@ -49,3 +49,30 @@ def forecast_ets(train, h: int) -> np.ndarray:
         return np.maximum(forecast, 0.0)
     except Exception:
         return forecast_seasonal_naive(train, h)
+
+
+def forecast_sarima(train, h: int) -> np.ndarray:
+    """SARIMA (1,0,1)x(1,1,1,12): captures month-to-month autocorrelation
+    (e.g. a shock month followed by a rebound) that ETS has no mechanism for.
+
+    Slower to fit than ETS and needs its order chosen; same fallback rule
+    as everything else - if it cannot fit, SeasonalNaive answers instead.
+    """
+    from statsmodels.tsa.statespace.sarimax import SARIMAX
+
+    values = np.asarray(train, dtype=float)
+    if len(values) < 24:
+        return forecast_seasonal_naive(train, h)
+    try:
+        model = SARIMAX(
+            values,
+            order=(1, 0, 1),
+            seasonal_order=(1, 1, 1, 12),
+            enforce_stationarity=False,
+            enforce_invertibility=False,
+        )
+        fitted = model.fit(disp=False, maxiter=200)
+        forecast = np.asarray(fitted.forecast(h), dtype=float)
+        return np.maximum(np.nan_to_num(forecast, nan=0.0), 0.0)
+    except Exception:
+        return forecast_seasonal_naive(train, h)
