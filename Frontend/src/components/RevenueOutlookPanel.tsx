@@ -2,9 +2,15 @@
 
 import React, { useEffect, useState } from 'react';
 import { AlertTriangle, Layers, RefreshCw } from 'lucide-react';
-import { fetchRevenueOutlook, RevenueOutlookResponse } from '../lib/priceApi';
+import { BdScenario, fetchRevenueOutlook, RevenueOutlookResponse } from '../lib/priceApi';
 
 const MAX_HORIZON = 6;
+const SCENARIO_OPTIONS: { value: BdScenario; label: string }[] = [
+  { value: 'flat', label: 'Manual % (BD flat)' },
+  { value: 'low', label: 'BD forecast P10 (low)' },
+  { value: 'base', label: 'BD forecast P50 (base)' },
+  { value: 'high', label: 'BD forecast P90 (high)' },
+];
 
 const fmt0 = (v: number | null | undefined) =>
   v === null || v === undefined ? '-' : Math.round(v).toLocaleString('en-US');
@@ -15,6 +21,7 @@ export function RevenueOutlookPanel() {
   const [horizon, setHorizon] = useState(3);
   const [bdChangePct, setBdChangePct] = useState(0);
   const [demandChangePct, setDemandChangePct] = useState(0);
+  const [bdScenario, setBdScenario] = useState<BdScenario>('flat');
   const [data, setData] = useState<RevenueOutlookResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [offline, setOffline] = useState(false);
@@ -22,7 +29,7 @@ export function RevenueOutlookPanel() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetchRevenueOutlook(horizon, bdChangePct, demandChangePct)
+    fetchRevenueOutlook(horizon, bdChangePct, demandChangePct, bdScenario)
       .then((res) => {
         if (cancelled) return;
         setData(res);
@@ -37,7 +44,7 @@ export function RevenueOutlookPanel() {
     return () => {
       cancelled = true;
     };
-  }, [horizon, bdChangePct, demandChangePct]);
+  }, [horizon, bdChangePct, demandChangePct, bdScenario]);
 
   if (offline) {
     return (
@@ -81,7 +88,7 @@ export function RevenueOutlookPanel() {
 
       <div className="p-6 space-y-5">
         {/* Controls */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Horizon</label>
             <select
@@ -97,6 +104,20 @@ export function RevenueOutlookPanel() {
             </select>
           </div>
           <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">BD scenario</label>
+            <select
+              value={bdScenario}
+              onChange={(e) => setBdScenario(e.target.value as BdScenario)}
+              className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:border-cyan-500 bg-slate-50/50 text-sm"
+            >
+              {SCENARIO_OPTIONS.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">BD price change (%)</label>
             <input
               type="number"
@@ -104,8 +125,9 @@ export function RevenueOutlookPanel() {
               max={300}
               step={5}
               value={bdChangePct}
+              disabled={bdScenario !== 'flat'}
               onChange={(e) => setBdChangePct(Number(e.target.value))}
-              className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm font-mono bg-slate-50/50"
+              className="w-full px-3.5 py-2 rounded-lg border border-slate-300 text-sm font-mono bg-slate-50/50 disabled:opacity-40"
             />
           </div>
           <div>
@@ -192,7 +214,7 @@ export function RevenueOutlookPanel() {
 
         {data && (
           <div className="text-[11px] text-slate-400">
-            {data.basis}
+            {data.basis} · BD: {data.bd_source}
             {data.skipped.length > 0 && ` · ไม่มี demand forecast สำหรับ: ${data.skipped.join(', ')}`}
           </div>
         )}

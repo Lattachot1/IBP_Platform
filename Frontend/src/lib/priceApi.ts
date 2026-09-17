@@ -5,6 +5,9 @@
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
+/** flat = hold BD at its last value shifted by a percentage; low/base/high = P10/P50/P90 path of the butadiene forecast */
+export type BdScenario = 'flat' | 'low' | 'base' | 'high';
+
 export interface PriceModelRow {
   product_id: string;
   champion: string;
@@ -59,6 +62,8 @@ export interface PriceForecastResponse {
   trained_through: string;
   horizon_months: number;
   bd_change_pct: number;
+  bd_scenario: BdScenario;
+  bd_source: string;
   bd_last: number;
   bd_last_month: string | null;
   periods: string[];
@@ -103,6 +108,8 @@ export interface RevenueOutlookResponse {
   horizon_months: number;
   bd_change_pct: number;
   demand_change_pct: number;
+  bd_scenario: BdScenario;
+  bd_source: string;
   basis: string;
   periods: string[];
   grades: RevenueGrade[];
@@ -132,20 +139,22 @@ export function fetchPriceHistory(productId: string): Promise<PriceHistoryRespon
 export function fetchPriceForecast(
   productId: string,
   horizonMonths: number,
-  bdChangePct: number
+  bdChangePct: number,
+  bdScenario: BdScenario = 'flat'
 ): Promise<PriceForecastResponse> {
   const id = encodeURIComponent(productId);
   return getJson<PriceForecastResponse>(
-    `/api/v1/price/forecast?product_id=${id}&horizon_months=${horizonMonths}&bd_change_pct=${bdChangePct}`
+    `/api/v1/price/forecast?product_id=${id}&horizon_months=${horizonMonths}&bd_change_pct=${bdChangePct}&bd_scenario=${bdScenario}`
   );
 }
 
 export function fetchRevenueOutlook(
   horizonMonths: number,
   bdChangePct: number,
-  demandChangePct: number
+  demandChangePct: number,
+  bdScenario: BdScenario = 'flat'
 ): Promise<RevenueOutlookResponse> {
   return getJson<RevenueOutlookResponse>(
-    `/api/v1/revenue/outlook?horizon_months=${horizonMonths}&bd_change_pct=${bdChangePct}&demand_change_pct=${demandChangePct}`
+    `/api/v1/revenue/outlook?horizon_months=${horizonMonths}&bd_change_pct=${bdChangePct}&demand_change_pct=${demandChangePct}&bd_scenario=${bdScenario}`
   );
 }

@@ -36,12 +36,18 @@ IBP_Platform/
 │   └── forecasting/
 │       ├── data.py / models.py / service.py / backtest.py   # Demand Forecast Engine (ตัน/เดือน ต่อ grade)
 │       ├── registry.py            # ที่เก็บ engine ที่เทรนแล้วให้ router อื่นใช้
-│       └── price/                 # Sale Price Forecast Engine (USD/ตัน ต่อ grade, ผูกกับราคา BD)
-│           ├── data.py            # ราคา FOB รายเดือนจาก billing + ราคา BD รายเดือน
-│           ├── models.py          # Naive, ETS, BD pass-through, Ensemble
-│           ├── service.py         # backtest, champion, interval, artifact I/O, forecast
-│           ├── train.py           # CLI: python -m forecasting.price.train
-│           └── api.py             # /api/v1/price/*, /api/v1/revenue/outlook
+│       ├── price/                 # Sale Price Forecast Engine (USD/ตัน ต่อ grade, ผูกกับราคา BD)
+│       │   ├── data.py            # ราคา FOB รายเดือนจาก billing + ราคา BD รายเดือน
+│       │   ├── models.py          # Naive, ETS, BD pass-through, Ensemble
+│       │   ├── service.py         # backtest, champion, interval, artifact I/O, forecast
+│       │   ├── train.py           # CLI: python -m forecasting.price.train
+│       │   └── api.py             # /api/v1/price/*, /api/v1/revenue/outlook
+│       └── rawmat/                # Butadiene Forecast Engine (port จาก model-service เดิม)
+│           ├── models.py          # random walk, drift, ETS(log), mean reversion, seasonal ETS
+│           ├── service.py         # backtest h1-4, quantile P2.5-P97.5, artifact เดิม + metrics, scenario path
+│           ├── train.py           # CLI: python -m forecasting.rawmat.train
+│           ├── api.py             # /api/v1/raw-material-price/* (GET/POST เดิม + history, models, retrain)
+│           └── samples/           # artifact 2026-09-13 จาก branch เดิม (fixture + fallback)
 └── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
     ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React, Recharts
@@ -55,11 +61,13 @@ IBP_Platform/
         │   └── globals.css        # Tailwind styling & animations
         ├── components/
         │   ├── DemandForecastPanel.tsx / ModelPerformancePanel.tsx   # Demand forecast UI
-        │   ├── SalePricePanel.tsx        # Sale price forecast + BD scenario UI
-        │   └── RevenueOutlookPanel.tsx   # Demand x Price = FOB revenue outlook
+        │   ├── RawMaterialPanel.tsx      # Butadiene Price Outlook (P10/P50/P90 + backtest table)
+        │   ├── SalePricePanel.tsx        # Sale price forecast + BD scenario UI (manual % หรือ BD forecast)
+        │   └── RevenueOutlookPanel.tsx   # Demand x Price = FOB revenue outlook ตาม scenario
         └── lib/
             ├── forecastApi.ts     # typed client: demand endpoints
-            └── priceApi.ts        # typed client: price + revenue endpoints
+            ├── priceApi.ts        # typed client: price + revenue endpoints
+            └── rawmatApi.ts       # typed client: butadiene endpoints
 ```
 
 ---
@@ -102,10 +110,13 @@ python scripts/prepare_data.py --billing "<path>/Sale Billing TSL.xlsx" --bd "<p
 # -> DemandModel/sale_billing.csv และ data/bd_price_history.xlsx (ทั้งสองโฟลเดอร์ถูก git-ignore)
 
 python -m forecasting.price.train      # backtest report + เขียน artifacts/sale_price_forecast.json
+python -m forecasting.rawmat.train     # backtest report + เขียน artifacts/butadiene_forecast.json
 python -m pytest                       # ชุดทดสอบบนข้อมูลสังเคราะห์
 ```
-เมื่อ Backend เริ่มทำงาน Demand Engine จะเทรนจาก `DemandModel/` และ Sale Price Engine จะโหลด artifact
-ถ้าไม่มี artifact จะเทรนครั้งเดียวแล้วเขียนไฟล์ให้ (train job → artifact → serve) เรียก `POST /api/v1/price/retrain` เมื่อข้อมูลเดือนใหม่เข้ามา
+เมื่อ Backend เริ่มทำงาน Demand Engine จะเทรนจาก `DemandModel/` ส่วน Sale Price และ Butadiene Engine จะโหลด artifact
+ถ้าไม่มี artifact จะเทรนครั้งเดียวแล้วเขียนไฟล์ให้ (train job → artifact → serve) และถ้าไม่มีไฟล์ BD เลย Butadiene Engine
+จะเสิร์ฟ artifact ตัวอย่างวันที่ 2026-09-13 จาก branch เดิมแทน เรียก `POST /api/v1/price/retrain` และ
+`POST /api/v1/raw-material-price/retrain` เมื่อข้อมูลเดือนใหม่เข้ามา
 
 ---
 
@@ -114,6 +125,7 @@ python -m pytest                       # ชุดทดสอบบนข้อ
 เมื่อเปิดใช้งาน Docker Desktop บนเครื่องของคุณ สามารถสั่งรันทุกเซอร์วิสพร้อม MS SQL 2022 ด้วยคำสั่งเดียว:
 
 ```bash
+cp .env.example .env      # แก้ MSSQL_SA_PASSWORD และ DATABASE_URL ใน .env (ไม่มี .env ก็รันได้ด้วยค่า default)
 docker compose up -d --build
 ```
 
@@ -162,9 +174,21 @@ docker compose up -d --build
 ### Sale Price Forecast & Revenue Outlook (`/api/v1`)
 - `GET /api/v1/price/models` — champion ต่อ grade พร้อม MAPE (ทั้งหมด / hold-out / naive) และ coverage
 - `GET /api/v1/price/history?product_id=` — ราคา FOB และ net รายเดือน (USD/ตัน), ตัน, ราคา BD
-- `GET /api/v1/price/forecast?product_id=&horizon_months=1..6&bd_change_pct=` — พยากรณ์ราคาพร้อม 80% interval ภายใต้ scenario ราคา BD (เดือนแรกใช้ BD จริงล่าสุด scenario มีผลตั้งแต่เดือนที่ 2)
+- `GET /api/v1/price/forecast?product_id=&horizon_months=1..6&bd_change_pct=&bd_scenario=flat|low|base|high` — พยากรณ์ราคาพร้อม 80% interval ภายใต้ scenario ราคา BD (เดือนแรกใช้ BD จริงล่าสุด scenario มีผลตั้งแต่เดือนที่ 2) `flat` = ตรึง BD ที่ค่าล่าสุดแล้วขยับด้วย `bd_change_pct`, `low/base/high` = เส้นทาง P10/P50/P90 จาก Butadiene Engine
 - `POST /api/v1/price/retrain` — เทรนใหม่และเขียน artifact
-- `GET /api/v1/revenue/outlook?horizon_months=&bd_change_pct=&demand_change_pct=` — รายได้ FOB ต่อ grade = ปริมาณ × ราคา P50
+- `GET /api/v1/revenue/outlook?horizon_months=&bd_change_pct=&demand_change_pct=&bd_scenario=` — รายได้ FOB ต่อ grade = ปริมาณ × ราคา P50 ภายใต้ scenario เดียวกัน
+
+### Butadiene Forecast (`/api/v1/raw-material-price`, สัญญาเดิมของ model-service)
+- `GET|POST /api/v1/raw-material-price/forecast` — `symbol` (default PA0033242), `horizon_months` 1..6 → P2.5/P10/P50/P90/P97.5 และ best/base/worst purchase case ต่อเดือน พร้อม MAE แยก horizon และ coverage
+- `GET /api/v1/raw-material-price/history` — ราคา BD รายเดือน
+- `GET /api/v1/raw-material-price/models` — leaderboard ของ 5 โมเดล MAE h1-h4 / hold-out
+- `POST /api/v1/raw-material-price/retrain` — เทรนใหม่และเขียน artifact
+
+## 🛢 Butadiene Forecast (port จาก feature/butadiene-price-forecast)
+
+- **สิ่งที่เก็บจาก branch เดิม:** schema ของ artifact ทุก field, endpoint และ payload เดิม (GET/POST), ตรรกะ validate ลำดับ quantile, หน้าตา UI section และข้อความเตือน; artifact วันที่ 2026-09-13 เก็บเป็น `forecasting/rawmat/samples/` สำหรับ test และ fallback
+- **สิ่งที่เพิ่ม:** โค้ดเทรนที่ทำซ้ำได้ (`python -m forecasting.rawmat.train`), backtest 18 folds × 4 เดือน แบบ nested (champion จาก folds ช่วงแรก, 4 folds สุดท้ายเป็น hold-out), MAE แยก h1-h4 แทน MAE เดือนเดียว, coverage ของ P10-P90 บน hold-out, และ **scenario chaining** ให้ Sale Price และ Revenue ใช้เส้นทาง P10/P50/P90 ได้ทันที
+- **ผลบนข้อมูลจริง (BD ถึง ส.ค. 2026):** champion คือ Mean reversion (24 เดือน, 15%/เดือน) MAE h1-h4 = 173 / 292 / 345 / 327 USD/t เทียบ random walk 176 / 328 / 401 / 407; hold-out ที่ครอบช่วงราคาพุ่งและร่วงปี 2026 สูงกว่ามาก (562 vs 700) และ coverage P10-P90 อยู่ที่ 38% จึงต้องอ่านเป็นช่วง ไม่ใช่ตัวเลขเดียว
 
 ---
 

@@ -26,6 +26,7 @@ import { DemandForecastPanel } from '../components/DemandForecastPanel';
 import { ModelPerformancePanel } from '../components/ModelPerformancePanel';
 import { SalePricePanel } from '../components/SalePricePanel';
 import { RevenueOutlookPanel } from '../components/RevenueOutlookPanel';
+import { RawMaterialPanel } from '../components/RawMaterialPanel';
 
 // Data Interfaces
 interface ScenarioResult {
@@ -927,7 +928,8 @@ export default function IBPPlatformDashboard() {
         <DemandForecastPanel />
         <ModelPerformancePanel />
 
-        {/* Sale Price Forecast (billing + butadiene) and Revenue Outlook (demand x price) */}
+        {/* Butadiene outlook (raw material) -> Sale Price Forecast -> Revenue Outlook (demand x price) */}
+        <RawMaterialPanel />
         <SalePricePanel />
         <RevenueOutlookPanel />
 

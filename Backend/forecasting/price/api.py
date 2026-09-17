@@ -19,11 +19,38 @@ import math
 from fastapi import APIRouter, HTTPException, Query
 
 from .. import registry
+from ..rawmat import service as rawmat_service
 from . import service
 
 log = logging.getLogger("ibp.price.api")
 
 router = APIRouter(prefix="/api/v1", tags=["sale-price"])
+
+SCENARIO_HELP = (
+    "flat = hold BD at its last value shifted by bd_change_pct; "
+    "low / base / high = the P10 / P50 / P90 path of the butadiene forecast"
+)
+
+
+def _bd_values_for(scenario: str, horizon: int) -> tuple:
+    """BD path for the scenario: None for flat (the percentage shift applies),
+    else the quantile path of the butadiene engine. Returns (values, description)."""
+    if scenario not in rawmat_service.SCENARIOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"bd_scenario must be one of {list(rawmat_service.SCENARIOS)}",
+        )
+    if scenario == "flat":
+        return None, "last BD held flat, shifted by bd_change_pct"
+    rawmat_engine = registry.get("rawmat")
+    if rawmat_engine is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Butadiene forecast engine unavailable; use bd_scenario=flat",
+        )
+    values = rawmat_service.scenario_path(rawmat_engine, scenario, horizon)
+    quantile = rawmat_service.SCENARIO_QUANTILE[scenario].upper()
+    return values, f"butadiene forecast {quantile} ({rawmat_engine['artifact_version']})"
 
 
 def _engine() -> dict:
@@ -83,19 +110,23 @@ def price_forecast(
     product_id: str = Query(default=None),
     horizon_months: int = Query(default=3, ge=1, le=service.MAX_HORIZON),
     bd_change_pct: float = Query(default=0.0, ge=-90.0, le=300.0),
+    bd_scenario: str = Query(default="flat", description=SCENARIO_HELP),
 ):
     """Selling-price forecast (USD/t) for one grade under a BD price scenario."""
     if not math.isfinite(bd_change_pct):
         raise HTTPException(status_code=400, detail="bd_change_pct must be a finite number")
     engine = _engine()
     product_id, info = _grade(engine, product_id)
-    result = service.forecast(info, horizon_months, bd_change_pct)
+    bd_values, bd_source = _bd_values_for(bd_scenario, horizon_months)
+    result = service.forecast(info, horizon_months, bd_change_pct, bd_values)
     return {
         "product_id": product_id,
         "basis": engine.get("target"),
         "trained_through": info["trained_through"],
         "horizon_months": horizon_months,
         "bd_change_pct": bd_change_pct,
+        "bd_scenario": bd_scenario,
+        "bd_source": bd_source,
         "bd_last": info["bd_last"],
         "bd_last_month": engine.get("bd_last_month"),
         **result,
@@ -138,6 +169,7 @@ def revenue_outlook(
     horizon_months: int = Query(default=3, ge=1, le=service.MAX_HORIZON),
     bd_change_pct: float = Query(default=0.0, ge=-90.0, le=300.0),
     demand_change_pct: float = Query(default=0.0, ge=-100.0, le=300.0),
+    bd_scenario: str = Query(default="flat", description=SCENARIO_HELP),
 ):
     """FOB revenue outlook per grade: demand forecast (tons) x sale-price forecast P50 (USD/t)."""
     price_engine = _engine()
@@ -146,13 +178,14 @@ def revenue_outlook(
         raise HTTPException(status_code=503, detail="Demand engine unavailable (billing data missing)")
     from .. import service as demand_service
 
+    bd_values, bd_source = _bd_values_for(bd_scenario, horizon_months)
     grades_out, skipped, totals = [], [], {}
     for grade, price_info in price_engine["grades"].items():
         demand_info = demand_engine["grades"].get(grade)
         if demand_info is None:
             skipped.append(grade)
             continue
-        price_fc = service.forecast(price_info, horizon_months, bd_change_pct)
+        price_fc = service.forecast(price_info, horizon_months, bd_change_pct, bd_values)
         demand_fc = demand_service.forecast(demand_info, horizon_months, demand_change_pct)
         price_by_period = dict(zip(price_fc["periods"], price_fc["forecast"]))
 
@@ -190,6 +223,8 @@ def revenue_outlook(
         "horizon_months": horizon_months,
         "bd_change_pct": bd_change_pct,
         "demand_change_pct": demand_change_pct,
+        "bd_scenario": bd_scenario,
+        "bd_source": bd_source,
         "basis": "FOB revenue = demand forecast (tons) x sale-price forecast P50 (USD/t); month 1 uses the last known BD",
         "periods": [t["period"] for t in totals_list],
         "grades": grades_out,

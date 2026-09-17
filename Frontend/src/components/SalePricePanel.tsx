@@ -14,6 +14,7 @@ import {
   YAxis,
 } from 'recharts';
 import {
+  BdScenario,
   fetchPriceForecast,
   fetchPriceHistory,
   fetchPriceModels,
@@ -38,6 +39,13 @@ const BD_PRESETS: { label: string; pct: number }[] = [
   { label: 'BD flat', pct: 0 },
   { label: 'BD +15%', pct: 15 },
 ];
+// Source of the BD path: a manual percentage, or the butadiene forecast quantiles
+const SCENARIO_OPTIONS: { value: BdScenario; label: string; short: string }[] = [
+  { value: 'flat', label: 'Manual %', short: 'manual' },
+  { value: 'low', label: 'BD forecast P10', short: 'P10 low' },
+  { value: 'base', label: 'P50', short: 'P50 base' },
+  { value: 'high', label: 'P90', short: 'P90 high' },
+];
 
 const fmt0 = (v: number | null | undefined) =>
   v === null || v === undefined ? '-' : Math.round(v).toLocaleString('en-US');
@@ -50,6 +58,7 @@ export function SalePricePanel() {
   const [productId, setProductId] = useState<string>('');
   const [horizon, setHorizon] = useState(3);
   const [bdChangePct, setBdChangePct] = useState(0);
+  const [bdScenario, setBdScenario] = useState<BdScenario>('flat');
   const [history, setHistory] = useState<PriceHistoryResponse | null>(null);
   const [forecast, setForecast] = useState<PriceForecastResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -78,7 +87,7 @@ export function SalePricePanel() {
     if (!productId) return;
     let cancelled = false;
     setLoading(true);
-    Promise.all([fetchPriceHistory(productId), fetchPriceForecast(productId, horizon, bdChangePct)])
+    Promise.all([fetchPriceHistory(productId), fetchPriceForecast(productId, horizon, bdChangePct, bdScenario)])
       .then(([h, f]) => {
         if (cancelled) return;
         setHistory(h);
@@ -94,7 +103,7 @@ export function SalePricePanel() {
     return () => {
       cancelled = true;
     };
-  }, [productId, horizon, bdChangePct]);
+  }, [productId, horizon, bdChangePct, bdScenario]);
 
   const rows: ChartRow[] = useMemo(() => {
     if (!history || !forecast) return [];
@@ -207,13 +216,38 @@ export function SalePricePanel() {
               <label className="text-xs font-semibold text-slate-600">BD Price Scenario (from month 2)</label>
               <span
                 className={`text-xs font-bold font-mono px-2 py-0.5 rounded ${
-                  bdChangePct > 0 ? 'bg-rose-100 text-rose-700' : bdChangePct < 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-700'
+                  bdScenario !== 'flat'
+                    ? 'bg-cyan-100 text-cyan-800'
+                    : bdChangePct > 0
+                    ? 'bg-rose-100 text-rose-700'
+                    : bdChangePct < 0
+                    ? 'bg-emerald-100 text-emerald-700'
+                    : 'bg-slate-100 text-slate-700'
                 }`}
               >
-                {bdChangePct > 0 ? `+${bdChangePct}%` : `${bdChangePct}%`}
+                {bdScenario !== 'flat'
+                  ? `forecast ${SCENARIO_OPTIONS.find((s) => s.value === bdScenario)?.short ?? bdScenario}`
+                  : bdChangePct > 0
+                  ? `+${bdChangePct}%`
+                  : `${bdChangePct}%`}
               </span>
             </div>
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5 mb-1.5">
+              {SCENARIO_OPTIONS.map((s) => (
+                <button
+                  key={s.value}
+                  onClick={() => setBdScenario(s.value)}
+                  className={`px-2.5 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
+                    bdScenario === s.value
+                      ? 'bg-cyan-700 text-white border-cyan-700'
+                      : 'bg-white hover:bg-cyan-50 text-cyan-800 border-cyan-200'
+                  }`}
+                >
+                  {s.label}
+                </button>
+              ))}
+            </div>
+            <div className={`flex items-center gap-1.5 ${bdScenario !== 'flat' ? 'opacity-40 pointer-events-none' : ''}`}>
               {BD_PRESETS.map((s) => (
                 <button
                   key={s.pct}
@@ -411,7 +445,7 @@ export function SalePricePanel() {
                 {fmt0(forecast.bd_last)} → {fmt0(forecast.bd_path[Math.min(1, forecast.bd_path.length - 1)])} USD/t
               </div>
               <div className="text-[11px] text-slate-500 mt-1.5">
-                last BD {bdLastMonth ?? forecast.bd_last_month ?? '-'} · เดือนแรกใช้ BD จริงล่าสุด, scenario มีผลตั้งแต่เดือนที่ 2
+                last BD {bdLastMonth ?? forecast.bd_last_month ?? '-'} · {forecast.bd_source} · เดือนแรกใช้ BD จริงล่าสุด
               </div>
             </div>
           </div>

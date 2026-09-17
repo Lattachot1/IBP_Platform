@@ -27,6 +27,8 @@ from forecasting import MODEL_NAME, generate_forecast, go_round, round2
 from forecasting import registry
 from forecasting.price import service as price_service
 from forecasting.price.api import router as price_router
+from forecasting.rawmat import service as rawmat_service
+from forecasting.rawmat.api import router as rawmat_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -189,6 +191,8 @@ app.add_middleware(
 
 # Sale-price forecast + revenue outlook (/api/v1/price/*, /api/v1/revenue/outlook)
 app.include_router(price_router)
+# Butadiene forecast (/api/v1/raw-material-price/*), ported from the model-service
+app.include_router(rawmat_router)
 
 
 @app.on_event("startup")
@@ -232,6 +236,16 @@ def on_startup() -> None:
         registry.set_engine("price", None)
         log.warning("[Price WARNING] Engine unavailable: %s", exc)
 
+    # Butadiene engine: artifact -> train -> committed sample, in that order.
+    try:
+        rawmat_engine, source = rawmat_service.load_or_train()
+        registry.set_engine("rawmat", rawmat_engine)
+        log.info("[RawMat] Engine ready from %s: %s (MAE h1-4 %s USD/t, origin %s)", source,
+                 rawmat_engine["model_name"], rawmat_engine["validation_mae"], rawmat_engine["forecast_origin"])
+    except Exception as exc:
+        registry.set_engine("rawmat", None)
+        log.warning("[RawMat WARNING] Engine unavailable: %s", exc)
+
 
 @app.get("/api/health")
 def handle_health():
@@ -252,6 +266,7 @@ def handle_health():
         "model_service": "Connected (in-process forecasting engine)",
         "forecast_engine": _engine_status(),
         "price_engine": _price_engine_status(),
+        "rawmat_engine": _rawmat_engine_status(),
         "planning_rules": {
             "normal_capacity": NORMAL_CAPACITY_LIMIT,
             "overtime_capacity": OVERTIME_EXTRA_CAPACITY,
@@ -435,6 +450,19 @@ def _price_engine_status() -> dict:
         "grades": sorted(engine["grades"]),
         "trained_at": engine["trained_at"],
         "artifact_version": engine.get("artifact_version"),
+    }
+
+
+def _rawmat_engine_status() -> dict:
+    engine = registry.get("rawmat")
+    if engine is None:
+        return {"status": "unavailable"}
+    return {
+        "status": "ready",
+        "source": engine.get("engine_source"),
+        "artifact_version": engine.get("artifact_version"),
+        "forecast_origin": engine.get("forecast_origin"),
+        "model_name": engine.get("model_name"),
     }
 
 
