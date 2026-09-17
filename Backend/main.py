@@ -24,6 +24,9 @@ from pydantic import BaseModel
 
 import database
 from forecasting import MODEL_NAME, generate_forecast, go_round, round2
+from forecasting import registry
+from forecasting.price import service as price_service
+from forecasting.price.api import router as price_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -184,6 +187,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Sale-price forecast + revenue outlook (/api/v1/price/*, /api/v1/revenue/outlook)
+app.include_router(price_router)
+
 
 @app.on_event("startup")
 def on_startup() -> None:
@@ -212,6 +218,19 @@ def on_startup() -> None:
     except Exception as exc:
         forecast_engine = None
         log.warning("[Forecast WARNING] Engine training skipped: %s", exc)
+    registry.set_engine("demand", forecast_engine)
+
+    # Sale-price engine: served from the artifact when one exists (train job ->
+    # artifact -> serve); trained once and written otherwise. Never fatal.
+    try:
+        price_engine, source = price_service.load_or_train()
+        registry.set_engine("price", price_engine)
+        log.info("[Price] Engine ready from %s for %d grades:", source, len(price_engine["grades"]))
+        for grade, info in price_engine["grades"].items():
+            log.info("[Price]   %s -> %s (MAPE %.1f%%)", grade, info["champion"], (info.get("mape") or 0.0) * 100)
+    except Exception as exc:
+        registry.set_engine("price", None)
+        log.warning("[Price WARNING] Engine unavailable: %s", exc)
 
 
 @app.get("/api/health")
@@ -232,6 +251,7 @@ def handle_health():
         "database": db_status,
         "model_service": "Connected (in-process forecasting engine)",
         "forecast_engine": _engine_status(),
+        "price_engine": _price_engine_status(),
         "planning_rules": {
             "normal_capacity": NORMAL_CAPACITY_LIMIT,
             "overtime_capacity": OVERTIME_EXTRA_CAPACITY,
@@ -406,6 +426,18 @@ def _engine_status() -> dict:
     }
 
 
+def _price_engine_status() -> dict:
+    engine = registry.get("price")
+    if engine is None:
+        return {"status": "unavailable"}
+    return {
+        "status": "ready",
+        "grades": sorted(engine["grades"]),
+        "trained_at": engine["trained_at"],
+        "artifact_version": engine.get("artifact_version"),
+    }
+
+
 def _round_or_none(value, digits: int):
     """Round a metric for JSON; NaN/inf become null (one bad grade must not 500 the leaderboard)."""
     value = float(value)
@@ -523,6 +555,7 @@ def handle_retrain():
             status_code=503,
             detail="Retrain failed, previous engine kept: %s" % exc,
         )
+    registry.set_engine("demand", forecast_engine)
     return {
         "status": "retrained",
         "trained_at": forecast_engine["trained_at"],

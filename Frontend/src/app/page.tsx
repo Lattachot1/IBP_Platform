@@ -24,6 +24,8 @@ import {
 } from 'lucide-react';
 import { DemandForecastPanel } from '../components/DemandForecastPanel';
 import { ModelPerformancePanel } from '../components/ModelPerformancePanel';
+import { SalePricePanel } from '../components/SalePricePanel';
+import { RevenueOutlookPanel } from '../components/RevenueOutlookPanel';
 
 // Data Interfaces
 interface ScenarioResult {
@@ -924,6 +926,10 @@ export default function IBPPlatformDashboard() {
         {/* AI Demand Forecast (real billing data) */}
         <DemandForecastPanel />
         <ModelPerformancePanel />
+
+        {/* Sale Price Forecast (billing + butadiene) and Revenue Outlook (demand x price) */}
+        <SalePricePanel />
+        <RevenueOutlookPanel />
 
         {/* Audit Trail & Scenario Comparison Table */}
         <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">

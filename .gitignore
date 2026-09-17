@@ -13,6 +13,7 @@ dist/
 # Python Cache & Virtual Environments
 __pycache__/
 */__pycache__/
+.pytest_cache/
 *.py[cod]
 *$py.class
 *.so
@@ -37,6 +38,12 @@ mssql-data/
 
 # Real client data (UBE/TSL) - never commit
 DemandModel/
+data/
+*.xlsx
+*.xls
+
+# Trained forecast artifacts contain company prices - never commit
+Backend/artifacts/*.json
 
 # Logs
 *.log

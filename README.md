@@ -27,21 +27,39 @@ IBP_Platform/
 │   └── 01-init.sql                # T-SQL Script สร้าง Database IBP_DB, Scenarios Table และ Seed Data
 ├── Backend/                       # Unified Python Backend (FastAPI)
 │   ├── Dockerfile                 # Python 3.12-slim container image
-│   ├── requirements.txt           # fastapi, uvicorn, pydantic, pymssql
+│   ├── requirements.txt           # fastapi, uvicorn, pydantic, pymssql, pandas, statsmodels
 │   ├── main.py                    # Simulation & Constraint Engine + REST API (MS SQL & In-Memory Fallback)
-│   ├── forecasting.py             # In-process Forecasting Engine (รวม model-service เดิมไว้ภายใน)
-│   └── database.py                # MS SQL Access Layer (pymssql) พร้อม In-Memory Fallback
+│   ├── database.py                # MS SQL Access Layer (pymssql) พร้อม In-Memory Fallback
+│   ├── scripts/prepare_data.py    # แปลงไฟล์ Excel ของบริษัทเป็นข้อมูล local (ไม่ commit)
+│   ├── artifacts/                 # forecast artifact ที่เทรนแล้ว (JSON, git-ignored)
+│   ├── tests/                     # pytest บนข้อมูลสังเคราะห์ (ไม่ใช้ข้อมูลบริษัท)
+│   └── forecasting/
+│       ├── data.py / models.py / service.py / backtest.py   # Demand Forecast Engine (ตัน/เดือน ต่อ grade)
+│       ├── registry.py            # ที่เก็บ engine ที่เทรนแล้วให้ router อื่นใช้
+│       └── price/                 # Sale Price Forecast Engine (USD/ตัน ต่อ grade, ผูกกับราคา BD)
+│           ├── data.py            # ราคา FOB รายเดือนจาก billing + ราคา BD รายเดือน
+│           ├── models.py          # Naive, ETS, BD pass-through, Ensemble
+│           ├── service.py         # backtest, champion, interval, artifact I/O, forecast
+│           ├── train.py           # CLI: python -m forecasting.price.train
+│           └── api.py             # /api/v1/price/*, /api/v1/revenue/outlook
 └── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
-    ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React
+    ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React, Recharts
     ├── tsconfig.json
     ├── tailwind.config.js
     ├── next.config.mjs            # Standalone output configuration
     └── src/
-        └── app/
-            ├── layout.tsx         # Enterprise theme layout
-            ├── page.tsx           # Single-Page Executive Dashboard & Simulator
-            └── globals.css        # Tailwind styling & animations
+        ├── app/
+        │   ├── layout.tsx         # Enterprise theme layout
+        │   ├── page.tsx           # Single-Page Executive Dashboard & Simulator
+        │   └── globals.css        # Tailwind styling & animations
+        ├── components/
+        │   ├── DemandForecastPanel.tsx / ModelPerformancePanel.tsx   # Demand forecast UI
+        │   ├── SalePricePanel.tsx        # Sale price forecast + BD scenario UI
+        │   └── RevenueOutlookPanel.tsx   # Demand x Price = FOB revenue outlook
+        └── lib/
+            ├── forecastApi.ts     # typed client: demand endpoints
+            └── priceApi.ts        # typed client: price + revenue endpoints
 ```
 
 ---
@@ -76,6 +94,18 @@ Backend จะเริ่มทำงานที่ **`http://localhost:8080`*
 #### 1.3 Forecasting Engine (รวมอยู่ใน Backend แล้ว)
 Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเข้ากับ Backend เป็นบริการ Python บริการเดียว
 ดู Swagger docs ได้ที่ **`http://localhost:8080/docs`**
+
+#### 1.4 เตรียมข้อมูลจริงสำหรับ Demand / Sale Price Forecast (ข้อมูลบริษัท ไม่ commit)
+```powershell
+cd Backend
+python scripts/prepare_data.py --billing "<path>/Sale Billing TSL.xlsx" --bd "<path>/BDsea_price_history_~5y_2026-09-11.xlsx"
+# -> DemandModel/sale_billing.csv และ data/bd_price_history.xlsx (ทั้งสองโฟลเดอร์ถูก git-ignore)
+
+python -m forecasting.price.train      # backtest report + เขียน artifacts/sale_price_forecast.json
+python -m pytest                       # ชุดทดสอบบนข้อมูลสังเคราะห์
+```
+เมื่อ Backend เริ่มทำงาน Demand Engine จะเทรนจาก `DemandModel/` และ Sale Price Engine จะโหลด artifact
+ถ้าไม่มี artifact จะเทรนครั้งเดียวแล้วเขียนไฟล์ให้ (train job → artifact → serve) เรียก `POST /api/v1/price/retrain` เมื่อข้อมูลเดือนใหม่เข้ามา
 
 ---
 
@@ -120,5 +150,29 @@ docker compose up -d --build
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด
-- `GET /api/health` — ตรวจสอบสถานะ Backend และ Database
+- `GET /api/health` — ตรวจสอบสถานะ Backend, Database, Demand Engine และ Price Engine
 - Swagger docs — `http://localhost:8080/docs`
+
+### Demand Forecast (`/api/v1`)
+- `GET /api/v1/models` — champion ต่อ grade จาก rolling-origin backtest
+- `GET /api/v1/history?product_id=` — ยอดขายรายเดือน (ตัน) ของ grade
+- `GET /api/v1/forecast?product_id=&horizon_months=&demand_change_pct=` — พยากรณ์ปริมาณพร้อม 80% interval
+- `POST /api/v1/retrain` — เทรนใหม่จาก `DemandModel/`
+
+### Sale Price Forecast & Revenue Outlook (`/api/v1`)
+- `GET /api/v1/price/models` — champion ต่อ grade พร้อม MAPE (ทั้งหมด / hold-out / naive) และ coverage
+- `GET /api/v1/price/history?product_id=` — ราคา FOB และ net รายเดือน (USD/ตัน), ตัน, ราคา BD
+- `GET /api/v1/price/forecast?product_id=&horizon_months=1..6&bd_change_pct=` — พยากรณ์ราคาพร้อม 80% interval ภายใต้ scenario ราคา BD (เดือนแรกใช้ BD จริงล่าสุด scenario มีผลตั้งแต่เดือนที่ 2)
+- `POST /api/v1/price/retrain` — เทรนใหม่และเขียน artifact
+- `GET /api/v1/revenue/outlook?horizon_months=&bd_change_pct=&demand_change_pct=` — รายได้ FOB ต่อ grade = ปริมาณ × ราคา P50
+
+---
+
+## 💵 Sale Price Forecast (fast pilot)
+
+- **เป้าหมาย:** ราคาขาย FOB เฉลี่ยรายเดือนต่อ grade (USD/ตัน ถ่วงน้ำหนักด้วยตัน) ล่วงหน้า 1-6 เดือน
+- **ข้อมูล:** billing extract (ตัด void docs, แถวที่ยังไม่ post และตันเป็นศูนย์; แปลง THB/EUR เป็น USD) + ราคา Butadiene FOB SE Asia (Argus PA0033242) รายสัปดาห์เฉลี่ยเป็นรายเดือน
+- **โมเดล:** Naive, ETS damped, **BD pass-through** (`p_t = a + b1·BD_{t-1} + b2·BD_{t-2} + c·p_{t-1}`), Ensemble — ราคาขายวิ่งตาม BD แบบ lag 1-2 เดือน
+- **การทดสอบ:** rolling-origin backtest 16 folds × 3 เดือน โดยตรึง BD ในอนาคตที่ค่าล่าสุด (ไม่มี leakage); champion เลือกจาก 12 folds แรก และรายงาน 4 folds สุดท้ายเป็น hold-out แยกต่างหาก
+- **Interval:** 80% จาก quantile ของ residual สัมพัทธ์ต่อ horizon (ไม่แคบลงตามระยะ) พร้อม hold-out coverage
+- **ผลบนข้อมูลจริง (ก.ย. 2026):** pass-through ชนะ naive ทุก grade, MAPE รวม 3.9-7.0% เทียบ naive 6.4-11.1%; hold-out ที่ครอบช่วงราคาพุ่งปี 2026 สูงกว่านั้นและ coverage ต่ำกว่า 80% ซึ่งแสดงบนหน้าจอเสมอ

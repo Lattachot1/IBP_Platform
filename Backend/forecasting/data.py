@@ -28,13 +28,16 @@ TYPE_COL = "Billing Type"
 LEVEL_COL = "Grade"
 EXCLUDED_TYPES = {"ZV01", "ZV02"}
 
-# Grades with complete history (89 months after dropping the in-progress
-# month) - the pilot products
+# Pilot products. The first four have complete 89-month history; BR150B is
+# also complete and BR360B starts in 2020-12 (69 months, still well above the
+# 24-month minimum). All six are needed for the revenue outlook.
 PILOT_GRADES = [
     "UBEPOL BR150",
     "UBEPOL BR150L",
     "UBEPOL VCR617",
     "UBEPOL VCR412",
+    "UBEPOL BR150B",
+    "UBEPOL BR360B",
 ]
 
 
