@@ -1,7 +1,31 @@
 # AI-Driven Integrated Business Planning (IBP) Simulation Platform
+
 **Client:** UBE Chemicals (Asia) PCL  
 **Theme:** "One Platform, One Data, One Plan"  
 **Topic:** Capstone 2026 - Topic 45 | **Team:** CALTLAPSE
+
+---
+
+## Ideal Optimization Prototype
+
+The `feature/ideal-optimization-prototype` branch adds a discussion-ready
+two-month planning prototype. It jointly chooses production by grade, campaign
+activation, overtime, butadiene purchase, raw-material inventory,
+finished-goods inventory, and shortage. The dashboard compares three policies:
+
+- **Deterministic:** optimize against the base point forecast.
+- **Stochastic:** minimize probability-weighted cost across low, base, and high scenarios.
+- **Robust:** minimize the cost of the worst scenario.
+
+All product, capacity, cost, BOM, and scenario values in this prototype are
+**illustrative assumptions**, not confirmed UBE master data. The UI exposes
+these assumptions so the project team can validate the real business rules
+before connecting production data.
+
+`POST /api/v1/optimization/demo` solves all three policies and returns the
+selected plan, strategy comparison, cost breakdown, monthly plan, product plan,
+and scenario outcomes. Focused backend tests are in
+`Backend/test_optimization.py`.
 
 ---
 

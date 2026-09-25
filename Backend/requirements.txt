@@ -4,3 +4,4 @@ pydantic>=2.0.0
 pymssql>=2.2.11
 pandas>=2.2.0
 statsmodels>=0.14.1
+pulp>=2.8.0

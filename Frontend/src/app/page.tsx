@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { DemandForecastPanel } from '../components/DemandForecastPanel';
 import { ModelPerformancePanel } from '../components/ModelPerformancePanel';
+import { OptimizationPanel } from '../components/OptimizationPanel';
 
 // Data Interfaces
 interface ScenarioResult {
@@ -920,6 +921,9 @@ export default function IBPPlatformDashboard() {
             </div>
           </div>
         </section>
+
+        {/* Ideal production and procurement optimization prototype */}
+        <OptimizationPanel />
 
         {/* AI Demand Forecast (real billing data) */}
         <DemandForecastPanel />

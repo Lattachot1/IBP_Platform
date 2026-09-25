@@ -16,13 +16,14 @@ import logging
 import math
 import threading
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import database
+import optimization
 from forecasting import MODEL_NAME, generate_forecast, go_round, round2
 
 logging.basicConfig(
@@ -70,6 +71,15 @@ class SimulateRequest(BaseModel):
     demand_change_pct: float = 0.0
     enable_ot: bool = False
     created_by: str = ""
+
+
+class OptimizationDemoRequest(BaseModel):
+    strategy: Literal["deterministic", "stochastic", "robust"] = "stochastic"
+    demand_adjustment_pct: float = Field(default=0.0, ge=-20.0, le=30.0)
+    capacity_adjustment_pct: float = Field(default=0.0, ge=-15.0, le=15.0)
+    raw_price_adjustment_pct: float = Field(default=0.0, ge=-20.0, le=30.0)
+    shortage_penalty_multiplier: float = Field(default=1.0, ge=0.25, le=3.0)
+    service_target_pct: float = Field(default=95.0, ge=85.0, le=99.5)
 
 
 # ----------------------------------------------------------------------------
@@ -382,6 +392,20 @@ def handle_get_scenarios() -> List[Scenario]:
 
     # Return in-memory scenarios, sorted newest first
     return store.recent(10)
+
+
+# ----------------------------------------------------------------------------
+# Ideal optimization prototype (illustrative assumptions only)
+# ----------------------------------------------------------------------------
+@app.post("/api/v1/optimization/demo")
+def handle_optimization_demo(req: OptimizationDemoRequest):
+    """Compare deterministic, stochastic and robust two-month plans.
+
+    The endpoint intentionally runs on visible demo assumptions so business
+    users can confirm decisions, costs and constraints before client master
+    data are connected.
+    """
+    return optimization.build_demo_comparison(req.model_dump())
 
 
 # ----------------------------------------------------------------------------
