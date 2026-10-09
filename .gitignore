@@ -37,6 +37,7 @@ mssql-data/
 
 # Real client data (UBE/TSL) - never commit
 DemandModel/
+Constraint/
 
 # Logs
 *.log

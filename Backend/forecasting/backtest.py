@@ -17,12 +17,13 @@ Run:  cd Backend && python -m forecasting.backtest
 import numpy as np
 
 from . import data
-from .models import forecast_ets, forecast_sarima, forecast_seasonal_naive
+from .models import forecast_ets, forecast_gbr_median, forecast_sarima, forecast_seasonal_naive
 
 MODELS = {
     "SeasonalNaive(m=12)": forecast_seasonal_naive,
     "Holt-Winters(ETS damped)": forecast_ets,
     "SARIMA(1,0,1)(1,1,1,12)": forecast_sarima,
+    "GBR-median(lags+calendar)": forecast_gbr_median,
 }
 MIN_TRAIN_MONTHS = 24
 
@@ -44,15 +45,18 @@ def _naive12_scale(train: np.ndarray) -> float:
 
 
 def rolling_backtest(series, horizon: int = 3, n_folds: int = 6) -> dict:
-    """Return {model_name: [(train, actual, predicted) per fold]}."""
-    y = np.asarray(series, dtype=float)
-    n = len(y)
+    """Return {model_name: [(train, actual, predicted) per fold]}.
+
+    Folds are series slices (models may use the calendar index).
+    """
+    n = len(series)
     out = {name: [] for name in MODELS}
     for k in range(n_folds, 0, -1):
         cutoff = n - k * horizon
         if cutoff < MIN_TRAIN_MONTHS:
             continue
-        train, actual = y[:cutoff], y[cutoff:cutoff + horizon]
+        train = series.iloc[:cutoff]
+        actual = series.values[cutoff:cutoff + horizon]
         for name, fn in MODELS.items():
             out[name].append((train, actual, fn(train, horizon)))
     return out

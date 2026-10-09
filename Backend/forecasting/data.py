@@ -15,6 +15,7 @@ Data rules (decided from the quality report on 2026-09-16):
   month is dropped).
 """
 
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -35,14 +36,30 @@ PILOT_GRADES = [
     "UBEPOL BR150L",
     "UBEPOL VCR617",
     "UBEPOL VCR412",
+    "UBEPOL BR150B",   # sparse: 22 active months / 55 - intermittent methods
+    "UBEPOL BR360B",   # sparse: 21 active months / 61 - intermittent methods
 ]
+# Grades produced as occasional campaigns -> intermittent-demand models
+SPARSE_GRADES = {"UBEPOL BR150B", "UBEPOL BR360B"}
 
 
 def find_source_file(path=None) -> Path:
-    """Locate the billing extract (first CSV in DemandModel/, or explicit path)."""
+    """Locate the billing extract.
+
+    Priority: explicit path > DEMAND_DATA_PATH env > the first CSV in
+    DemandModel/ that is not an external download (fred_*.csv). The name
+    filter matters on Windows, where Path sorting is case-insensitive and
+    'fred_brent.csv' would otherwise sort before 'Sale Billing...'.
+    """
     if path:
         return Path(path)
-    candidates = sorted(DATA_DIR.glob("*.csv"))
+    env = os.getenv("DEMAND_DATA_PATH", "").strip()
+    if env:
+        return Path(env)
+    candidates = sorted(
+        p for p in DATA_DIR.glob("*.csv")
+        if not p.name.lower().startswith("fred_")
+    )
     if not candidates:
         raise FileNotFoundError(
             f"No billing CSV found in {DATA_DIR}. Put the extract there or "
