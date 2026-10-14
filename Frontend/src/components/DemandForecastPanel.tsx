@@ -42,7 +42,7 @@ const HISTORY_MONTHS_SHOWN = 36;
 export function DemandForecastPanel() {
   const [grades, setGrades] = useState<GradeModel[]>([]);
   const [productId, setProductId] = useState<string>('');
-  const [horizon, setHorizon] = useState(3);
+  const [horizon, setHorizon] = useState(2);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
   const [forecast, setForecast] = useState<ForecastResponse | null>(null);
   const [loading, setLoading] = useState(false);
@@ -118,8 +118,7 @@ export function DemandForecastPanel() {
         <div>
           <h2 className="text-base font-bold text-amber-900">AI Demand Forecast unavailable</h2>
           <p className="text-sm text-amber-800 mt-1">
-            ไม่พบ Forecast Engine (Backend อาจยังไม่ได้รัน หรือไม่มีข้อมูล billing) —
-            What-If Simulator ด้านบนยังใช้งานได้ตามปกติ
+            ไม่พบ Forecast Engine หรือข้อมูล billing
           </p>
         </div>
       </section>
@@ -127,19 +126,19 @@ export function DemandForecastPanel() {
   }
 
   return (
-    <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+    <section className="forecast-detail bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
       <div className="p-6 border-b border-slate-200 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Cpu className="w-5 h-5 text-blue-600" />
-            <h2 className="text-lg font-bold text-slate-800">AI Demand Forecast</h2>
+            <h2 className="text-lg font-bold text-slate-800">Demand Forecast</h2>
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
               Real Billing Data
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            พยากรณ์ดีมานด์รายเดือน (ton) จากโมเดลจริงที่เทรนจากข้อมูล billing 89 เดือน ·
-            กรอบคือ 80% interval ที่ขยายตามระยะทาง
+            Monthly billing tonnage · {selectedGrade?.months ?? '-'} months of history ·
+            {forecast?.interval.level_pct ?? 80}% marginal prediction intervals
           </p>
         </div>
         {forecast && (
@@ -154,8 +153,9 @@ export function DemandForecastPanel() {
         {/* Controls */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1">Product Grade</label>
+            <label htmlFor="forecast-detail-grade" className="block text-xs font-semibold text-slate-600 mb-1">Product Grade</label>
             <select
+              id="forecast-detail-grade"
               value={productId}
               onChange={(e) => setProductId(e.target.value)}
               className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50 text-sm"
@@ -169,12 +169,13 @@ export function DemandForecastPanel() {
           </div>
           <div>
             <div className="flex justify-between items-center mb-1">
-              <label className="text-xs font-semibold text-slate-600">Forecast Horizon</label>
+              <label htmlFor="forecast-detail-horizon" className="text-xs font-semibold text-slate-600">Forecast Horizon</label>
               <span className="text-xs font-bold font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
                 {horizon} เดือน
               </span>
             </div>
             <input
+              id="forecast-detail-horizon"
               type="range"
               min={1}
               max={12}
@@ -187,7 +188,7 @@ export function DemandForecastPanel() {
         </div>
 
         {/* Chart */}
-        <div className="relative h-72 rounded-xl border border-slate-200 bg-slate-50/50 p-2">
+        <div className="forecast-detail-chart relative h-72 p-2">
           {loading && (
             <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/60 rounded-xl">
               <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
@@ -225,26 +226,26 @@ export function DemandForecastPanel() {
                   contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
                 />
                 <Area
-                  type="monotone"
+                  type="linear"
                   dataKey="band"
                   name="band"
                   stroke="none"
-                  fill="#3b82f6"
+                  fill="#74c6a6"
                   fillOpacity={0.12}
                   isAnimationActive={false}
                 />
                 <Line
-                  type="monotone"
+                  type="linear"
                   dataKey="actual"
                   name="actual"
-                  stroke="#2563eb"
+                  stroke="#315e48"
                   strokeWidth={2}
                   dot={false}
                   connectNulls={false}
                   isAnimationActive={false}
                 />
                 <Line
-                  type="monotone"
+                  type="linear"
                   dataKey="forecast"
                   name="forecast"
                   stroke="#059669"
@@ -265,11 +266,11 @@ export function DemandForecastPanel() {
 
         {/* Summary cards */}
         {forecast && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4">
+          <div className="forecast-summary-band grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="p-4">
               <div className="flex items-center justify-between text-slate-500 mb-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wider">
-                  Order Total ({horizon} mo)
+                  Forecast Total ({horizon} mo)
                 </span>
                 <Package className="w-4 h-4 text-blue-600" />
               </div>
@@ -280,11 +281,11 @@ export function DemandForecastPanel() {
                 <span className="text-xs text-slate-500">ton</span>
               </div>
               <div className="text-[11px] text-slate-500 mt-1.5">
-                80% interval: {fmt(Math.min(...forecast.lower_tons))} – {fmt(Math.max(...forecast.upper_tons))} t
+                {forecast.basis}
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="p-4">
               <div className="flex items-center justify-between text-slate-500 mb-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wider">Champion Model</span>
                 <TrendingUp className="w-4 h-4 text-emerald-600" />
@@ -297,7 +298,7 @@ export function DemandForecastPanel() {
               </div>
             </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-4">
+            <div className="p-4">
               <div className="flex items-center justify-between text-slate-500 mb-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wider">Accuracy (Backtest)</span>
                 <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
@@ -318,6 +319,8 @@ export function DemandForecastPanel() {
             </div>
           </div>
         )}
+        {forecast && <div className="table-scroll"><table><thead><tr><th>Forecast month</th><th>Point forecast</th><th>Lower {forecast.interval.level_pct}%</th><th>Upper {forecast.interval.level_pct}%</th></tr></thead><tbody>{forecast.periods.map((period, i) => <tr key={period}><td>{period}</td><td>{fmt(forecast.forecast_tons[i])} t</td><td>{fmt(forecast.lower_tons[i])} t</td><td>{fmt(forecast.upper_tons[i])} t</td></tr>)}</tbody></table></div>}
+        <div className="text-xs text-slate-400">Latest extract-month completeness is unverified. Monthly intervals are not a joint interval for the horizon total.</div>
       </div>
     </section>
   );

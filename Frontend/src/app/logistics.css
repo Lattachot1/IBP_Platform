@@ -1,0 +1,689 @@
+.logistics-studio {
+  margin-top: 24px;
+}
+.logistics-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 15px;
+  margin-bottom: 24px;
+}
+.logistics-segments {
+  display: flex;
+  border: 1px solid #cfdcd6;
+  border-radius: 5px;
+  padding: 3px;
+  gap: 3px;
+  background: #fff;
+}
+.logistics-segments button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: 3px;
+  font-size: 11px;
+  color: #62766d;
+  white-space: nowrap;
+}
+.logistics-segments button[aria-pressed="true"] {
+  background: #1b5649;
+  color: white;
+}
+.logistics-provenance {
+  color: #8c6341;
+  font-size: 9px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.logistics-tools {
+  margin-left: auto;
+  display: flex;
+  gap: 9px;
+}
+.logistics-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid #dbe4dd;
+  border-bottom: 1px solid #dbe4dd;
+  margin-bottom: 24px;
+}
+.logistics-metrics > div {
+  padding: 20px 18px;
+  border-right: 1px solid #dbe4dd;
+  min-width: 0;
+}
+.logistics-metrics > div:first-child {
+  padding-left: 0;
+}
+.logistics-metrics > div:last-child {
+  border: none;
+}
+.logistics-metrics span,
+.logistics-metrics em {
+  display: block;
+  color: #738079;
+  font-size: 11px;
+  font-style: normal;
+}
+.logistics-metrics strong {
+  display: block;
+  font-size: 29px;
+  line-height: 1.6;
+  font-weight: 600;
+}
+.logistics-metrics small {
+  font-size: 13px;
+  margin-left: 6px;
+  font-weight: 400;
+}
+.logistics-metrics .risk strong,
+.logistics-studio .late {
+  color: #b9543b;
+}
+.logistics-world {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 322px;
+  background: #fff;
+  border-top: 1px solid #dce6df;
+  border-bottom: 1px solid #dce6df;
+}
+.globe-stage {
+  position: relative;
+  min-height: 650px;
+  background: #0e2529;
+  overflow: hidden;
+}
+.world-globe {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+.world-globe canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.globe-overlay-top {
+  position: absolute;
+  z-index: 2;
+  top: 26px;
+  left: 27px;
+  right: 22px;
+  pointer-events: none;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+.globe-eyebrow {
+  font-size: 9px;
+  color: #8bbeb6;
+  font-weight: 600;
+}
+.globe-overlay-top h2 {
+  font-size: 22px;
+  font-weight: 500;
+  color: #eff8f4;
+  margin: 8px 0;
+}
+.globe-date {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: #99b6b6;
+}
+.globe-controls {
+  display: flex;
+  gap: 6px;
+  align-items: start;
+  pointer-events: auto;
+}
+.globe-controls .icon-button {
+  color: #b4d7ce;
+  background: #1e3b3c;
+  border-color: #3d5755;
+}
+.globe-controls .icon-button[aria-pressed="true"] {
+  background: #306b5c;
+  color: #d7f9e9;
+}
+.globe-status {
+  color: #c2dfd6;
+  position: absolute;
+  top: 49%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  padding: 15px;
+  pointer-events: none;
+}
+.globe-hover {
+  position: absolute;
+  left: 24px;
+  bottom: 81px;
+  color: #edf8f3;
+  background: #224645;
+  border: 1px solid #3d5e57;
+  padding: 8px 12px;
+  border-radius: 4px;
+  max-width: calc(100% - 48px);
+  font-size: 11px;
+  pointer-events: none;
+}
+.globe-port-label {
+  position: absolute;
+  color: #e7faf4;
+  font-size: 10px;
+  background: #204b45;
+  border: 1px solid #528777;
+  padding: 3px 6px;
+  border-radius: 3px;
+  pointer-events: none;
+  max-width: 130px;
+  white-space: nowrap;
+}
+.globe-legend {
+  position: absolute;
+  bottom: 49px;
+  left: 27px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 17px;
+  color: #b7d0cd;
+  font-size: 10px;
+  pointer-events: none;
+}
+.globe-legend span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.globe-legend i {
+  display: block;
+  width: 18px;
+  height: 2px;
+  background: #53e2c4;
+}
+.globe-legend i.outbound {
+  background: #7dcaf1;
+}
+.globe-legend i.late {
+  background: #ff9475;
+}
+.globe-footnote {
+  position: absolute;
+  bottom: 23px;
+  left: 27px;
+  right: 20px;
+  color: #819f9e;
+  font-size: 9px;
+  pointer-events: none;
+}
+.route-inspector {
+  padding: 22px;
+  border-left: 1px solid #dce6df;
+  min-width: 0;
+}
+.route-inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.route-identity {
+  margin: 19px 0;
+}
+.route-identity > span {
+  color: #7c8b84;
+  font-size: 10px;
+  display: block;
+}
+.route-identity strong {
+  display: block;
+  font-size: 22px;
+  font-weight: 600;
+  margin: 4px 0;
+}
+.route-identity small {
+  color: #7b8b80;
+  font-size: 11px;
+}
+.route-endpoints {
+  border-top: 1px solid #e3e9e3;
+  border-bottom: 1px solid #e3e9e3;
+  padding: 8px 0;
+}
+.route-endpoints > div {
+  display: flex;
+  gap: 11px;
+  padding: 10px 0;
+  align-items: center;
+}
+.route-endpoints i {
+  width: 7px;
+  height: 7px;
+  border: 1px solid #669a89;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.route-endpoints span {
+  font-size: 8px;
+  color: #7c8c83;
+  flex: 1;
+}
+.route-endpoints strong {
+  display: block;
+  font-size: 13px;
+  margin: 3px 0;
+  color: #294337;
+}
+.route-endpoints small {
+  font-size: 10px;
+}
+.route-endpoints .icon-button {
+  width: 30px;
+  height: 30px;
+}
+.route-state {
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 0 8px;
+}
+.route-state > span {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 11px;
+  color: #168571;
+  white-space: nowrap;
+}
+.route-state strong {
+  font-size: 10px;
+  font-weight: 500;
+  text-align: right;
+}
+.route-progress {
+  height: 3px;
+  background: #e5ede7;
+  overflow: hidden;
+  margin: 5px 0 18px;
+}
+.route-progress > span {
+  display: block;
+  height: 100%;
+  background: #249b83;
+  transition: width 0.2s;
+}
+.route-edit-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+.route-edit-grid label {
+  font-size: 10px;
+  color: #647b6d;
+  min-width: 0;
+}
+.route-edit-grid label.wide {
+  grid-column: 1 / -1;
+}
+.route-edit-grid input {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  margin-top: 5px;
+  height: 35px;
+  border: 1px solid #d5e1d9;
+  border-radius: 4px;
+  padding: 0 6px;
+  color: #284e3f;
+  background: #f9fbf9;
+  font-size: 11px;
+}
+.route-arrival {
+  border-top: 1px solid #e4e9e4;
+  margin-top: 18px;
+  padding-top: 14px;
+}
+.route-arrival > span {
+  font-size: 10px;
+  color: #6b8274;
+}
+.route-arrival strong {
+  float: right;
+  font-size: 15px;
+}
+.route-arrival small {
+  display: block;
+  color: #849289;
+  font-size: 9px;
+  padding-top: 7px;
+}
+.route-distance {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px;
+  font-size: 9px;
+  color: #839287;
+  margin-top: 12px;
+}
+.logistics-time {
+  background: #fff;
+  padding: 19px 26px;
+  border-bottom: 1px solid #dce6df;
+}
+.logistics-time-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+.logistics-time-head h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin-top: 5px;
+}
+.logistics-time-buttons {
+  display: flex;
+  gap: 8px;
+}
+.logistics-studio input[type="range"] {
+  accent-color: #168c73;
+  width: 100%;
+  height: 16px;
+  cursor: pointer;
+}
+.time-ticks {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: #839184;
+  margin-top: 6px;
+}
+.logistics-stress {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.9fr;
+  gap: 28px;
+  border-bottom: 1px solid #dce6df;
+  padding: 26px 0;
+}
+.stress-setting label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  margin: 12px 0;
+}
+.stress-setting label strong {
+  margin-left: auto;
+  font-size: 13px;
+  color: #ae6544;
+}
+.stress-outcome {
+  border-left: 1px solid #dce6df;
+  padding-left: 28px;
+}
+.stress-outcome > span,
+.stress-exposure > span {
+  font-size: 11px;
+  color: #6d8376;
+  display: block;
+}
+.stress-outcome > div {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+  color: #8b9c91;
+}
+.stress-outcome strong {
+  font-size: 25px;
+  font-weight: 600;
+}
+.stress-outcome small,
+.stress-exposure small {
+  font-size: 9px;
+  color: #8b978e;
+  display: block;
+  margin-top: 10px;
+}
+.stress-exposure strong {
+  display: block;
+  margin-top: 8px;
+  font-size: 25px;
+  font-weight: 600;
+}
+.logistics-ledger {
+  margin-top: 28px;
+}
+.logistics-buffer {
+  padding: 24px 0;
+  border-bottom: 1px solid #dce6df;
+}
+.buffer-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-left: 160px;
+  margin-right: 58px;
+  color: #8c9b91;
+  font-size: 9px;
+  padding: 6px 0;
+}
+.buffer-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) 58px;
+  width: 100%;
+  align-items: center;
+  text-align: left;
+  padding: 8px 0;
+  border-bottom: 1px solid #e5ebe3;
+}
+.buffer-row:hover,
+.buffer-row.selected {
+  background: #eaf2ec;
+}
+.buffer-name {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding-left: 8px;
+  min-width: 0;
+}
+.buffer-name strong {
+  font-size: 10px;
+  font-weight: 500;
+}
+.buffer-name small {
+  font-size: 9px;
+  color: #839284;
+}
+.buffer-track {
+  position: relative;
+  height: 16px;
+  background: linear-gradient(
+    to right,
+    transparent calc(50% - 0.5px),
+    #c9d6cc calc(50% - 0.5px),
+    #c9d6cc calc(50% + 0.5px),
+    transparent calc(50% + 0.5px)
+  );
+}
+.buffer-track i {
+  display: block;
+  position: absolute;
+  height: 6px;
+  top: 5px;
+  border-radius: 1px;
+}
+.buffer-row > strong {
+  text-align: right;
+  padding-right: 8px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.shipment-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+}
+.shipment-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 11px;
+  min-width: 890px;
+}
+.shipment-table th {
+  text-align: left;
+  color: #77877b;
+  font-weight: 500;
+  font-size: 10px;
+  background: #eef3ee;
+  padding: 12px 13px;
+  border-bottom: 1px solid #dde6dc;
+}
+.shipment-table td {
+  padding: 13px;
+  border-bottom: 1px solid #e5ebe3;
+}
+.shipment-table tr.selected {
+  background: #edf6f2;
+}
+.shipment-table strong {
+  font-weight: 500;
+}
+.shipment-table small {
+  display: block;
+  font-size: 9px;
+  color: #87988a;
+  margin-top: 4px;
+}
+.shipment-table td button {
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 8px;
+  color: #168873;
+}
+.shipment-table td button:hover {
+  text-decoration: underline;
+}
+.route-schedule,
+.shipment-snapshot {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-size: 10px;
+}
+.shipment-snapshot {
+  color: #6d8277;
+}
+.logistics-disclosure {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  color: #8b7960;
+  font-size: 10px;
+  padding: 15px 0;
+}
+.logistics-disclosure svg {
+  flex-shrink: 0;
+}
+@media (max-width: 1200px) {
+  .logistics-world {
+    grid-template-columns: minmax(0, 1fr) 292px;
+  }
+  .globe-stage {
+    min-height: 670px;
+  }
+  .route-inspector {
+    padding: 18px;
+  }
+  .logistics-provenance {
+    flex-basis: 100%;
+    order: 3;
+  }
+}
+@media (max-width: 850px) {
+  .logistics-world {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .globe-stage {
+    min-height: 480px;
+  }
+  .globe-overlay-top {
+    top: 20px;
+    left: 18px;
+    right: 18px;
+  }
+  .globe-overlay-top h2 {
+    font-size: 17px;
+  }
+  .route-inspector {
+    border-left: 0;
+    border-top: 1px solid #dce6df;
+  }
+  .logistics-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .logistics-metrics > div {
+    padding: 16px 12px;
+  }
+  .logistics-metrics > div:first-child {
+    padding-left: 12px;
+  }
+  .logistics-metrics > div:nth-child(2) {
+    border-right: none;
+  }
+  .logistics-metrics strong {
+    font-size: 24px;
+  }
+  .logistics-stress {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .stress-outcome {
+    border-left: 0;
+    padding-left: 0;
+  }
+  .logistics-tools {
+    margin-left: 0;
+  }
+  .logistics-ledger .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .globe-legend {
+    left: 18px;
+    gap: 12px;
+  }
+  .globe-footnote {
+    left: 18px;
+  }
+  .logistics-buffer .section-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .buffer-row {
+    grid-template-columns: 128px minmax(0, 1fr) 42px;
+  }
+  .buffer-axis {
+    margin-left: 128px;
+    margin-right: 42px;
+  }
+  .buffer-name {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+}

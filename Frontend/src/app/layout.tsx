@@ -1,9 +1,15 @@
-import type { Metadata } from 'next';
-import './globals.css';
+import type { Metadata } from "next";
+import "./globals.css";
+import "./planning.css";
+import "./manual-planning.css";
+import "./logistics.css";
+import "./executive.css";
+import "./connected.css";
 
 export const metadata: Metadata = {
-  title: 'UBE IBP Platform | One Platform, One Data, One Plan',
-  description: 'AI-Driven Integrated Business Planning (IBP) Simulation Platform for UBE Chemicals (Asia) PCL',
+  title: "UBE IBP Platform | One Platform, One Data, One Plan",
+  description:
+    "AI-Driven Integrated Business Planning (IBP) Simulation Platform for UBE Chemicals (Asia) PCL",
 };
 
 export default function RootLayout({

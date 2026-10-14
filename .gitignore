@@ -54,3 +54,7 @@ Thumbs.db
 *.swp
 *.swo
 docs/architecture-flow.html
+
+# Local UI verification captures
+.ui-qa/
+ui-desktop.png

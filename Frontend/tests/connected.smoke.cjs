@@ -1,0 +1,123 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const base = process.env.UI_TEST_URL || 'http://localhost:3000';
+const out = process.env.UI_TEST_OUTPUT || path.join(__dirname, '../../.ui-qa');
+fs.mkdirSync(out, { recursive: true });
+async function pixelCheck(canvas) {
+  const result = await canvas.evaluate(node => {
+    const gl = node.getContext('webgl2'), data = new Uint8Array(node.width * node.height * 4);
+    gl.readPixels(0, 0, node.width, node.height, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    const colors = new Set(); let opaque = 0, checksum = 0;
+    for (let i = 0; i < data.length; i += 68) { if (data[i + 3]) { opaque++; colors.add(`${data[i] >> 3},${data[i + 1] >> 3},${data[i + 2] >> 3}`); } checksum += data[i] * (1 + i % 97) + data[i + 1]; }
+    return { opaque, colors: colors.size, checksum };
+  });
+  assert(result.opaque > 500 && result.colors > 40, JSON.stringify(result));
+  return result;
+}
+let browser;
+(async () => {
+  browser = await chromium.launch({ channel: process.env.UI_BROWSER || 'msedge', headless: true });
+  const page = await browser.newPage({ viewport: { width: 1680, height: 1100 } });
+  const errors = [], failed = [];
+  page.on('pageerror', e => errors.push(e.message));
+  page.on('response', r => { if (r.status() >= 400) failed.push(`${r.status()} ${r.url()}`); });
+  await page.goto(base + '/?view=executive');
+  await page.getByText('Engine connected', { exact: true }).waitFor({ timeout: 60000 });
+  assert.equal(await page.locator('nav .nav-item').count(), 9, 'Keep all full-workspace views');
+  await page.locator('.factory-twin canvas[data-ready=true]').waitFor({ timeout: 60000 });
+  const first = await pixelCheck(page.locator('.factory-twin canvas'));
+  await page.getByRole('button', { name: 'Orbit factory camera', exact: true }).click();
+  await page.waitForTimeout(900);
+  assert.notEqual((await pixelCheck(page.locator('.factory-twin canvas'))).checksum, first.checksum);
+  await page.getByRole('button', { name: 'Orbit factory camera', exact: true }).click();
+  const service = await page.getByTestId('exec-service').textContent();
+  const cost = await page.getByTestId('exec-cost').textContent();
+  await page.getByRole('button', { name: 'Delay vessel +7d', exact: true }).click();
+  const delayedService = await page.getByTestId('exec-service').textContent();
+  assert.notEqual(delayedService, service);
+  const nav = name => page.locator('nav').getByRole('button', { name });
+  await nav(/Logistics globe/).click();
+  await page.locator('.world-globe[data-status=ready]').waitFor({ timeout: 60000 });
+  assert.equal(await page.getByTestId('scenario-arrival').textContent(), '8 Sept');
+  assert.equal(await page.getByTestId('exec-service').textContent(), delayedService);
+  const globe = page.locator('.world-globe canvas'), globeBefore = await pixelCheck(globe);
+  await page.getByRole('button', { name: 'Auto rotate globe', exact: true }).click();
+  await page.waitForTimeout(900);
+  assert.notEqual((await pixelCheck(globe)).checksum, globeBefore.checksum);
+  await page.getByRole('button', { name: 'Auto rotate globe', exact: true }).click();
+  await page.getByRole('spinbutton', { name: 'Shipment transit days', exact: true }).fill('13');
+  assert.equal(await page.getByTestId('scenario-arrival').textContent(), '15 Sept');
+  await nav('Interactive plan').click();
+  assert.equal(await page.locator('.gantt-item.purchase').first().getAttribute('data-start'), '14');
+  await page.getByRole('button', { name: 'Undo shared scenario', exact: true }).click();
+  assert.equal(await page.locator('.gantt-item.purchase').first().getAttribute('data-start'), '7');
+  await page.getByRole('button', { name: 'Undo shared scenario', exact: true }).click();
+  assert.equal(await page.locator('.gantt-item.purchase').first().getAttribute('data-start'), '0');
+  await page.getByRole('button', { name: 'Redo shared scenario', exact: true }).click();
+  assert.equal(await page.locator('.gantt-item.purchase').first().getAttribute('data-start'), '7');
+  await page.getByRole('button', { name: 'Redo shared scenario', exact: true }).click();
+  assert.equal(await page.locator('.gantt-item.purchase').first().getAttribute('data-start'), '14');
+  await page.getByRole('button', { name: 'Undo shared scenario', exact: true }).click();
+  await page.getByRole('button', { name: 'Undo shared scenario', exact: true }).click();
+  const event = page.locator('[data-kind=campaign][data-id=campaign-0]');
+  const original = page.locator('[data-ghost-id=campaign-0]');
+  assert.equal(await original.evaluate(node => parseFloat(node.style.left)), 2);
+  const handle = event.locator('.gantt-item-body'); await handle.scrollIntoViewIfNeeded();
+  const rect = await handle.boundingBox();
+  await page.mouse.move(rect.x + 35, rect.y + 15); await page.mouse.down();
+  await page.mouse.move(rect.x + 35 + 7 * 34, rect.y + 15, { steps: 12 });
+  assert.match(await page.getByLabel('Live plan differences').textContent(), /LIVE DRAG PREVIEW/);
+  assert(await page.getByRole('button', { name: 'Save draft', exact: true }).isDisabled());
+  assert.equal(await original.evaluate(node => parseFloat(node.style.left)), 2);
+  await page.mouse.up();
+  assert.equal(await event.getAttribute('data-start'), '7');
+  await page.getByRole('button', { name: 'Toggle ghost plan', exact: true }).click();
+  assert.equal(await page.locator('[data-ghost-id]').count(), 0);
+  await page.getByRole('button', { name: 'Toggle ghost plan', exact: true }).click();
+  assert(await original.isVisible());
+  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
+  await page.screenshot({ path: path.join(out, 'connected-timeline-desktop.png'), fullPage: true });
+  await nav('Executive cockpit').click();
+  const movedService = await page.getByTestId('exec-service').textContent();
+  assert.notEqual(movedService, service);
+  await page.getByRole('button', { name: 'Undo shared scenario', exact: true }).click();
+  assert.equal(await page.getByTestId('exec-service').textContent(), service);
+  assert.equal(await page.getByTestId('exec-cost').textContent(), cost);
+  await page.screenshot({ path: path.join(out, 'connected-executive-desktop.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Standalone sandbox', exact: true }).click();
+  await page.locator('.executive-cockpit').waitFor();
+  assert.equal(await page.locator('.connected-bar').count(), 0, 'Never imply legacy sandboxes share state');
+  await page.getByRole('button', { name: 'Shared daily scenario', exact: true }).click();
+  assert.equal(await page.getByTestId('exec-service').textContent(), service);
+  await page.goto(base + '/?view=timeline');
+  await page.getByRole('button', { name: 'Restore saved manual draft', exact: true }).click();
+  assert.equal(await page.locator('[data-id=campaign-0]').getAttribute('data-start'), '7');
+  await nav('Executive cockpit').click();
+  assert.equal(await page.getByTestId('exec-service').textContent(), movedService);
+  const revision = await page.locator('.connected-identity small').textContent();
+  for (const name of ['Overview', 'Demand intelligence', 'Scenario studio', 'Decision map', 'Model observatory', 'Saved plans']) {
+    await nav(name).click();
+    await page.waitForTimeout(200);
+    assert.equal(await page.locator('.connected-bar').count(), 0);
+    if (name === 'Overview') {
+      await page.getByText('Billing data connected', { exact: true }).waitFor();
+      await page.getByRole('button', { name: 'Refresh all data', exact: true }).click();
+      await page.getByText('Engine connected', { exact: true }).waitFor();
+    }
+  }
+  await nav('Executive cockpit').click();
+  assert.equal(await page.locator('.connected-identity small').textContent(), revision, 'Monthly refresh must not overwrite shared manual edits');
+  assert.equal(await page.getByTestId('exec-service').textContent(), movedService);
+  for (const [view, ready] of [['executive', '.factory-twin canvas[data-ready=true]'], ['timeline', '.gantt-grid'], ['logistics', '.world-globe[data-status=ready]']]) {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(base + '/?view=' + view);
+    await page.locator(ready).waitFor({ timeout: 60000 });
+    if (view !== 'timeline') await pixelCheck(page.locator(view === 'executive' ? '.factory-twin canvas' : '.world-globe canvas'));
+    assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'No page overflow');
+    await page.screenshot({ path: path.join(out, `connected-${view}-mobile.png`), fullPage: true });
+  }
+  assert.deepEqual(errors, []); assert.deepEqual(failed, []);
+  console.log(JSON.stringify({ status: 'passed', fullViews: 9, linkedViews: 3, sharedShipments: true, liveDrag: true, ghost: true, undo: true, saveRestore: true, monthlyRefreshIsolated: true, desktopMobile3D: true, errors, failed }));
+})().catch(e => { console.error(e); process.exitCode = 1; }).finally(async () => { if (browser) await browser.close(); });

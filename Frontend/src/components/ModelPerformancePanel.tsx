@@ -33,9 +33,9 @@ export function ModelPerformancePanel() {
       <div className="p-6 border-b border-slate-200">
         <div className="flex items-center gap-2">
           <ShieldCheck className="w-5 h-5 text-emerald-600" />
-          <h2 className="text-lg font-bold text-slate-800">Model Performance</h2>
+          <h2 className="text-lg font-bold text-slate-800">Backtest Evidence</h2>
           <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
-            Verified on Real Data
+            Billing backtest
           </span>
         </div>
         <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
