@@ -67,7 +67,7 @@ export default function OptimizePage() {
       const json: OptimizeResult = await res.json();
       // Contract guard: a backend older than this page answers without the
       // per-reactor fields — show it as stale instead of crashing.
-      if (!json.pair_notes || !json.days?.[0]?.reactors) {
+      if (!json.pair_notes || (json.days?.length > 0 && !json.days[0].reactors)) {
         setData(SAMPLE_PLAN);
         setPhase('stale');
       } else {
@@ -206,7 +206,7 @@ export default function OptimizePage() {
                 </select>
               </div>
               <p className="opt-railnote">
-                This stub always returns the same 28-day sample plan — every field here is consumed for real once the CP-SAT engine (Phase 2) replaces it.
+                The engine re-solves the full schedule from every field here on each run.
               </p>
             </div>
 
@@ -281,7 +281,7 @@ export default function OptimizePage() {
                 </div>
               ))}
               <p className="opt-railnote">
-                The stub recomputes fulfillment from these numbers immediately (the day-by-day plan stays fixed) — with the real engine these numbers will move the plan too.
+                These demand figures steer the optimization directly — edit them and press Run to re-solve.
               </p>
             </div>
 
@@ -400,8 +400,8 @@ export default function OptimizePage() {
                 </span>
               </div>
               <div className="opt-ganttwrap">
-                <div className="opt-gantt">
-                  <div className="opt-ghead">
+                <div className="opt-gantt" style={{ minWidth: 70 + data.days.length * 46 }}>
+                  <div className="opt-ghead" style={{ gridTemplateColumns: `70px repeat(${data.days.length}, 46px)` }}>
                     <div className="opt-glabel" />
                     {data.days.map((d) => {
                       const parts = d.date.split(' ');
@@ -413,7 +413,7 @@ export default function OptimizePage() {
                       );
                     })}
                   </div>
-                  <div className="opt-grow">
+                  <div className="opt-grow" style={{ gridTemplateColumns: `70px repeat(${data.days.length}, 46px)` }}>
                     <div className="opt-glabel">Plant</div>
                     {data.days.map((d) => (
                       <div
@@ -464,7 +464,7 @@ export default function OptimizePage() {
             </section>
 
             <section className="opt-panel" aria-label="Demand fulfillment">
-              <h2 className="opt-ph">Fulfillment by grade (produced vs 28-day demand)</h2>
+              <h2 className="opt-ph">Fulfillment by grade (produced vs demand in the horizon)</h2>
               {data.fulfillment.map((r) => {
                 const pct = r.demand > 0 ? Math.min(r.produced / r.demand, 1) * 100 : 0;
                 return (

@@ -120,7 +120,7 @@ docker compose up -d --build
 
 ### Python Backend (`:8080` — รวม Forecasting Engine ไว้ภายใน)
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
-- `POST /api/v1/optimize` — Production Schedule Optimization (Phase 1: sample-plan stub — engine CP-SAT จะเข้ามาแทนใน Phase 2 โดย contract ไม่เปลี่ยน)
+- `POST /api/v1/optimize` — Production Schedule Optimization (CP-SAT engine อ่านกฎจาก `Backend/optimization/plant_config.yaml` — ถ้าไม่ได้ติดตั้ง ortools จะ fallback เป็น sample plan)
 - หน้า `/optimize` — Production Optimization (Gantt แผนผลิตรายวัน, วงจร Reactor, Fulfillment, Constraint check) มี fallback ข้อมูลในเครื่องเมื่อ backend ไม่รัน
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด
