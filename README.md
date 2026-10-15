@@ -30,6 +30,7 @@ IBP_Platform/
 │   ├── requirements.txt           # fastapi, uvicorn, pydantic, pymssql
 │   ├── main.py                    # Simulation & Constraint Engine + REST API (MS SQL & In-Memory Fallback)
 │   ├── forecasting.py             # In-process Forecasting Engine (รวม model-service เดิมไว้ภายใน)
+│   ├── optimization/              # Production Schedule Optimizer (Phase 1: sample-plan stub → POST /api/v1/optimize)
 │   └── database.py                # MS SQL Access Layer (pymssql) พร้อม In-Memory Fallback
 └── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
@@ -41,6 +42,7 @@ IBP_Platform/
         └── app/
             ├── layout.tsx         # Enterprise theme layout
             ├── page.tsx           # Single-Page Executive Dashboard & Simulator
+            ├── optimize/          # Production Optimization page (/optimize): ตารางรายวันรายเตา RX1–RX4, Constraint check
             └── globals.css        # Tailwind styling & animations
 ```
 
@@ -118,6 +120,8 @@ docker compose up -d --build
 
 ### Python Backend (`:8080` — รวม Forecasting Engine ไว้ภายใน)
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
+- `POST /api/v1/optimize` — Production Schedule Optimization (Phase 1: sample-plan stub — engine CP-SAT จะเข้ามาแทนใน Phase 2 โดย contract ไม่เปลี่ยน)
+- หน้า `/optimize` — Production Optimization (Gantt แผนผลิตรายวัน, วงจร Reactor, Fulfillment, Constraint check) มี fallback ข้อมูลในเครื่องเมื่อ backend ไม่รัน
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด
 - `GET /api/health` — ตรวจสอบสถานะ Backend และ Database
