@@ -24,6 +24,8 @@ from pydantic import BaseModel
 
 import database
 from forecasting import MODEL_NAME, generate_forecast, go_round, round2
+from optimization import engine as optimization_engine
+from optimization.schemas import OptimizeRequest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -509,6 +511,22 @@ def handle_forecast(
             "mase": _round_or_none(info["mase"], 3),
         },
     }
+
+
+@app.post("/api/v1/optimize")
+def handle_optimize(req: OptimizeRequest) -> dict:
+    """Production schedule optimization (Phase 1: sample-plan stub).
+
+    The request/response contract is final: the Phase 2 CP-SAT engine
+    replaces optimization/engine.solve() without touching this endpoint
+    or the /optimize page. Deliberately independent of the forecast
+    engine and the database.
+    """
+    _reject_non_finite({
+        ("demand." + grade): value
+        for grade, value in (req.demand or {}).items()
+    })
+    return optimization_engine.solve(req.model_dump())
 
 
 @app.post("/api/v1/retrain")
