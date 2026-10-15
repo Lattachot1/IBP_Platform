@@ -247,7 +247,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         m.AddExactlyOne(is_main[d])
     main = [m.NewIntVar(0, G - 1, f"mainv_{d}") for d in Hr]
     for d in Hr:
-        m.Add(main[d] == sum((g + 1) * is_main[d][g] for g in range(G)))
+        m.Add(main[d] == sum(g * is_main[d][g] for g in range(G)))
 
     # ---- changeover flags ---------------------------------------------------
     chg = [None] + [m.NewBoolVar(f"chg_{d}") for d in range(1, H)]
@@ -276,7 +276,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     for d in range(1, H):
         for f in range(G):
             for t in range(G):
-                if (grades[f], grades[t]) not in transitions:
+                if f != t and (grades[f], grades[t]) not in transitions:
                     m.AddBoolOr([is_main[d - 1][f].Not(), is_main[d][t].Not()])
     flat_ceil = [transitions.get((grades[f], grades[t]), 0) for f in range(G) for t in range(G)]
     for d in range(1, H):
@@ -287,18 +287,29 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         total = sum(prod[d])
         m.Add(total <= ceil_v).OnlyEnforceIf(chg[d])
         m.Add(total <= cap_v).OnlyEnforceIf(chg[d].Not())
+    # both groups put out at least 1 ton on a changeover day (prevents
+    # zero-output days from gaming the VCR campaign counter)
+    for d in range(1, H):
+        for (f, t) in transitions:
+            lit = [chg[d], is_main[d - 1][gi[f]], is_main[d][gi[t]]]
+            m.Add(prod[d][gi[f]] >= 1).OnlyEnforceIf(lit)
+            m.Add(prod[d][gi[t]] >= 1).OnlyEnforceIf(lit)
 
     # ---- min run days -------------------------------------------------------
     for d in range(1, H):
         for g in range(G):
-            if d + min_runs[g] > H:
-                continue  # final campaign may run past the horizon
             s = m.NewBoolVar(f"mstart_{d}_{g}")
             m.Add(s <= is_main[d][g])
             m.Add(s <= chg[d])
             m.Add(s >= is_main[d][g] + chg[d] - 1)
-            for j in range(d, min(d + min_runs[g], H)):
-                m.Add(is_main[j][g] == 1).OnlyEnforceIf(s)
+            if d + min_runs[g] > H:
+                # too close to the horizon end to prove the min-run: this
+                # campaign must then run to the horizon end (no switch-out)
+                for j in range(d, H):
+                    m.Add(is_main[j][g] == 1).OnlyEnforceIf(s)
+            else:
+                for j in range(d, min(d + min_runs[g], H)):
+                    m.Add(is_main[j][g] == 1).OnlyEnforceIf(s)
 
     # ---- initial state ------------------------------------------------------
     for d in range(min(remain, H)):
@@ -359,8 +370,8 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         m.Add(run34[d] == 1).OnlyEnforceIf(cl12[d])
         m.Add(run12[d] == 1).OnlyEnforceIf(cl34[d])
     # cleaning windows are exactly `clean_days` long and never overlap
-    for cl in (cl12, cl34):
-        start_c = [m.NewBoolVar(f"{cl.name()}_{d}") for d in Hr]
+    for cl, cl_name in ((cl12, "cl12"), (cl34, "cl34")):
+        start_c = [m.NewBoolVar(f"{cl_name}_s_{d}") for d in Hr]
         for d in Hr:
             m.Add(cl[d] == sum(start_c[j] for j in range(max(0, d - clean_days + 1), d + 1)))
             for j in range(max(0, d - clean_days + 1), d):
@@ -381,7 +392,8 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         m.Add(age12[d] <= rx12_vcr_end_max).OnlyEnforceIf(vcr_end[d])
 
     # ---- objective ----------------------------------------------------------
-    fulfill = [m.NewIntVar(0, demand[g], f"ful_{g}") for g in range(G)]
+    demand_by_idx = [demand[g] for g in grades]
+    fulfill = [m.NewIntVar(0, demand_by_idx[g], f"ful_{g}") for g in range(G)]
     for g in range(G):
         m.Add(fulfill[g] <= sum(prod[d][g] for d in Hr))
     m.Maximize(sum(fulfill) - penalty * sum(chg[d] for d in range(1, H)))
