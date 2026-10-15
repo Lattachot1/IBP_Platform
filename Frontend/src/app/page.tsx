@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import {
   Play,
   Save,
@@ -415,6 +416,13 @@ export default function IBPPlatformDashboard() {
 
             {/* Status & Actions */}
             <div className="flex items-center gap-3 self-end md:self-auto">
+              <Link
+                href="/optimize"
+                className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+              >
+                <Factory className="w-3.5 h-3.5" />
+                Production Optimization
+              </Link>
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-slate-800/80 border border-slate-700 text-xs text-slate-300">
                 <span
                   className={`w-2.5 h-2.5 rounded-full ${
