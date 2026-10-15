@@ -7,7 +7,11 @@ decisions, cost definitions and constraints before a production model is built.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+import hashlib
+import json
+import math
+from pathlib import Path
 from typing import Dict, Iterable
 
 import pulp
@@ -70,6 +74,44 @@ MAX_OVERTIME = (900.0, 900.0)
 INITIAL_RAW_INVENTORY = 1100.0
 RAW_STORAGE_CAPACITY = 5000.0
 PURCHASE_CAPACITY = (7000.0, 7000.0)
+DEFAULT_OBJECTIVE_WEIGHTS = dict.fromkeys((
+    "raw_material", "production", "setup", "overtime", "finished_goods_holding",
+    "raw_material_holding", "shortage", "safety_stock_gap", "service_target_violation",
+), 1.0)
+PENALTY_COMPONENTS = {"shortage", "safety_stock_gap", "service_target_violation"}
+MODEL_SOURCE_SHA = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
+
+
+def model_signature() -> str:
+    """Identify the loaded formulation and fixed master data, not user preferences."""
+    payload = {
+        "source": MODEL_SOURCE_SHA, "periods": PERIODS,
+        "products": [asdict(product) for product in PRODUCTS], "scenarios": SCENARIO_SPECS,
+        "costs": [SETUP_COST, OVERTIME_COST, RAW_HOLDING_COST, SAFETY_GAP_COST, SERVICE_VIOLATION_COST],
+        "limits": [NORMAL_CAPACITY, MAX_OVERTIME, INITIAL_RAW_INVENTORY, RAW_STORAGE_CAPACITY, PURCHASE_CAPACITY],
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
+
+
+def normalize_objective_weights(values: dict | None = None) -> dict:
+    if values is None:
+        values = {}
+    if not isinstance(values, dict) or set(values) - set(DEFAULT_OBJECTIVE_WEIGHTS):
+        raise ValueError("unknown objective weight")
+    weights = {**DEFAULT_OBJECTIVE_WEIGHTS, **values}
+    for key, value in weights.items():
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 20:
+            raise ValueError("objective weight %s must be finite and between 0 and 20" % key)
+    if not any(weights.values()):
+        raise ValueError("at least one objective weight must be positive")
+    return weights
+
+
+def _effective_weights(request: dict) -> dict:
+    weights = normalize_objective_weights(request.get("objective_weights"))
+    # Preserve older clients' shortage preference without changing the base loss rate.
+    weights["shortage"] *= float(request["shortage_penalty_multiplier"])
+    return weights
 
 
 def _round(value: float, digits: int = 1) -> float:
@@ -118,6 +160,7 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
     shortage = pulp.LpVariable.dicts("shortage", (scenario_names, codes, periods), lowBound=0)
     safety_gap = pulp.LpVariable.dicts("safety_gap", (scenario_names, codes, periods), lowBound=0)
     service_violation = pulp.LpVariable.dicts("service_violation", scenario_names, lowBound=0)
+    stockout = pulp.LpVariable.dicts("stockout", (scenario_names, codes, periods), cat="Binary")
 
     capacity_factor = 1.0 + float(request["capacity_adjustment_pct"]) / 100.0
     normal_capacity = [max(100.0, value * capacity_factor) for value in NORMAL_CAPACITY]
@@ -155,9 +198,18 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
                     == previous_inventory + production[code][t] - demand + shortage[scenario_name][code][t]
                 )
                 model += shortage[scenario_name][code][t] <= demand
+                # Lost sales cannot coexist with positive closing stock of the same grade.
+                stock_bound = product.initial_inventory + len(PERIODS) * product.max_monthly
+                model += inventory[scenario_name][code][t] <= stock_bound * (1 - stockout[scenario_name][code][t])
+                model += shortage[scenario_name][code][t] <= demand * stockout[scenario_name][code][t]
                 model += safety_gap[scenario_name][code][t] >= product.safety_stock - inventory[scenario_name][code][t]
 
     service_target = float(request["service_target_pct"]) / 100.0
+    for s in scenario_names:
+        model += service_violation[s] >= (
+            pulp.lpSum(shortage[s][code][t] for code in codes for t in periods)
+            - (1.0 - service_target) * sum(sum(scenarios[s]["demands"][code]) for code in codes)
+        )
     if mode == "stochastic":
         expected_shortage = pulp.lpSum(
             scenarios[s]["probability"] * shortage[s][code][t]
@@ -178,28 +230,28 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
             total_demand = sum(scenarios[s]["demands"][code][t] for code in codes for t in periods)
             model += total_shortage <= (1.0 - service_target) * total_demand + service_violation[s]
 
-    penalty_multiplier = float(request["shortage_penalty_multiplier"])
+    weights = _effective_weights(request)
     common_cost = (
         pulp.lpSum(
-            product_by_code[code].production_cost * production[code][t]
-            + SETUP_COST * active[code][t]
+            weights["production"] * product_by_code[code].production_cost * production[code][t]
+            + weights["setup"] * SETUP_COST * active[code][t]
             for code in codes for t in periods
         )
-        + pulp.lpSum(OVERTIME_COST * overtime[t] + RAW_HOLDING_COST * raw_inventory[t] for t in periods)
+        + pulp.lpSum(weights["overtime"] * OVERTIME_COST * overtime[t] + weights["raw_material_holding"] * RAW_HOLDING_COST * raw_inventory[t] for t in periods)
     )
 
     scenario_costs: Dict[str, pulp.LpAffineExpression] = {}
     for s in scenario_names:
         scenario_costs[s] = (
             common_cost
-            + pulp.lpSum(scenarios[s]["raw_prices"][t] * purchase[t] for t in periods)
+            + pulp.lpSum(weights["raw_material"] * scenarios[s]["raw_prices"][t] * purchase[t] for t in periods)
             + pulp.lpSum(
-                product_by_code[code].holding_cost * inventory[s][code][t]
-                + product_by_code[code].shortage_cost * penalty_multiplier * shortage[s][code][t]
-                + SAFETY_GAP_COST * safety_gap[s][code][t]
+                weights["finished_goods_holding"] * product_by_code[code].holding_cost * inventory[s][code][t]
+                + weights["shortage"] * product_by_code[code].shortage_cost * shortage[s][code][t]
+                + weights["safety_stock_gap"] * SAFETY_GAP_COST * safety_gap[s][code][t]
                 for code in codes for t in periods
             )
-            + SERVICE_VIOLATION_COST * service_violation[s]
+            + weights["service_target_violation"] * SERVICE_VIOLATION_COST * service_violation[s]
         )
 
     if mode == "deterministic":
@@ -232,13 +284,13 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
         "raw_inventory": [_round(pulp.value(raw_inventory[t]), 4) for t in periods],
         "normal_capacity": normal_capacity,
     }
-    return {"status": status, "decisions": decisions}
+    return {"status": status, "decisions": decisions, "weighted_objective": float(pulp.value(model.objective) or 0.0)}
 
 
 def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
     decisions = solved["decisions"]
     product_by_code = {p.code: p for p in PRODUCTS}
-    penalty_multiplier = float(request["shortage_penalty_multiplier"])
+    weights = _effective_weights(request)
     scenario_rows = []
     scenario_details = {}
 
@@ -279,7 +331,7 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
                 components["production"] += produced * product.production_cost
                 components["setup"] += decisions["active"][code][t] * SETUP_COST
                 components["finished_goods_holding"] += ending_inventory * product.holding_cost
-                components["shortage"] += short * product.shortage_cost * penalty_multiplier
+                components["shortage"] += short * product.shortage_cost
                 components["safety_stock_gap"] += safety_gap * SAFETY_GAP_COST
                 total_demand += demand
                 total_shortage += short
@@ -291,7 +343,6 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
                 "shortage": product_shortage,
             }
 
-        total_cost = sum(components.values())
         service_level = 100.0 if total_demand == 0 else 100.0 * (1.0 - total_shortage / total_demand)
         allowed_shortage = (1.0 - float(request["service_target_pct"]) / 100.0) * total_demand
         components["service_target_violation"] = (
@@ -303,6 +354,8 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
             "label": scenario["label"],
             "probability": scenario["probability"],
             "total_cost": _round(total_cost),
+            "weighted_score": _round(sum(weights[key] * value for key, value in components.items())),
+            "operating_cost": _round(sum(value for key, value in components.items() if key not in PENALTY_COMPONENTS)),
             "service_level_pct": _round(service_level, 2),
             "shortage_tons": _round(total_shortage),
             "ending_inventory_tons": _round(sum(v["ending_inventory"] for v in product_detail.values())),
@@ -328,6 +381,7 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
         )
         for key in next(iter(scenario_details.values()))["components"]
     }
+    weighted_components = {key: weights[key] * value for key, value in expected_components.items()}
 
     product_rows = []
     for product in PRODUCTS:
@@ -369,6 +423,13 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
         "status": solved["status"],
         "expected_total_cost": _round(expected_total_cost),
         "worst_case_cost": _round(max(row["total_cost"] for row in scenario_rows)),
+        "expected_operating_cost": _round(sum(value for key, value in expected_components.items() if key not in PENALTY_COMPONENTS)),
+        "expected_penalty_cost": _round(sum(value for key, value in expected_components.items() if key in PENALTY_COMPONENTS)),
+        "expected_weighted_score": _round(sum(weighted_components.values())),
+        "worst_weighted_score": _round(max(row["weighted_score"] for row in scenario_rows)),
+        "optimized_weighted_score": _round(solved["weighted_objective"]),
+        "objective_weights": weights,
+        "weighted_breakdown": {key: _round(value) for key, value in weighted_components.items()},
         "expected_service_level_pct": _round(expected_service, 2),
         "worst_service_level_pct": _round(min(row["service_level_pct"] for row in scenario_rows), 2),
         "expected_shortage_tons": _round(expected_shortage),
@@ -383,6 +444,7 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
 
 def build_demo_comparison(request: dict) -> dict:
     """Solve and compare deterministic, stochastic and robust demo plans."""
+    request = {**request, "objective_weights": normalize_objective_weights(request.get("objective_weights"))}
     scenarios = _scenario_data(request)
     results = {}
     for mode in ("deterministic", "stochastic", "robust"):
@@ -399,6 +461,11 @@ def build_demo_comparison(request: dict) -> dict:
                 "status",
                 "expected_total_cost",
                 "worst_case_cost",
+                "expected_operating_cost",
+                "expected_penalty_cost",
+                "expected_weighted_score",
+                "worst_weighted_score",
+                "optimized_weighted_score",
                 "expected_service_level_pct",
                 "worst_service_level_pct",
                 "expected_shortage_tons",
@@ -410,6 +477,7 @@ def build_demo_comparison(request: dict) -> dict:
 
     return {
         "prototype_status": "illustrative_assumptions",
+        "model_signature": model_signature(),
         "selected_strategy": selected_mode,
         "currency": "USD",
         "unit": "metric_ton",
@@ -433,6 +501,9 @@ def build_demo_comparison(request: dict) -> dict:
             "Production, purchase timing and overtime are controllable decisions.",
             "Demand and BD price scenarios are correlated low/base/high cases.",
             "Costs, BOM factors, safety stocks and capacities are illustrative.",
+            "Objective weights express preferences, not accounting prices or hard priorities.",
+            "Service targets and safety stocks are soft: changing weights does not guarantee zero shortage.",
+            "Weighted score is separate from unweighted operating expenses and modeled penalties.",
             "Shortage is treated as lost sales; no backlog carries to the next month.",
         ],
         "constraint_summary": [

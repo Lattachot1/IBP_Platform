@@ -20,7 +20,7 @@ from typing import List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import database
 import optimization
@@ -73,6 +73,25 @@ class SimulateRequest(BaseModel):
     created_by: str = ""
 
 
+class ObjectiveWeights(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
+    raw_material: float = Field(default=1.0, ge=0, le=20)
+    production: float = Field(default=1.0, ge=0, le=20)
+    setup: float = Field(default=1.0, ge=0, le=20)
+    overtime: float = Field(default=1.0, ge=0, le=20)
+    finished_goods_holding: float = Field(default=1.0, ge=0, le=20)
+    raw_material_holding: float = Field(default=1.0, ge=0, le=20)
+    shortage: float = Field(default=1.0, ge=0, le=20)
+    safety_stock_gap: float = Field(default=1.0, ge=0, le=20)
+    service_target_violation: float = Field(default=1.0, ge=0, le=20)
+
+    @model_validator(mode="after")
+    def require_active_weight(self):
+        if not any(self.model_dump().values()):
+            raise ValueError("At least one objective weight must be positive")
+        return self
+
+
 class OptimizationDemoRequest(BaseModel):
     strategy: Literal["deterministic", "stochastic", "robust"] = "stochastic"
     demand_adjustment_pct: float = Field(default=0.0, ge=-20.0, le=30.0)
@@ -80,6 +99,7 @@ class OptimizationDemoRequest(BaseModel):
     raw_price_adjustment_pct: float = Field(default=0.0, ge=-20.0, le=30.0)
     shortage_penalty_multiplier: float = Field(default=1.0, ge=0.25, le=3.0)
     service_target_pct: float = Field(default=95.0, ge=85.0, le=99.5)
+    objective_weights: ObjectiveWeights = Field(default_factory=ObjectiveWeights)
 
 
 # ----------------------------------------------------------------------------

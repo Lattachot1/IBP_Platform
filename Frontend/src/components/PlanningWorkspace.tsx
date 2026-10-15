@@ -56,6 +56,9 @@ import { ModelPerformancePanel } from "./ModelPerformancePanel";
 import { ManualPlanStudio } from "./ManualPlanStudio";
 import { LogisticsGlobeStudio } from "./LogisticsGlobeStudio";
 import { ExecutiveCockpit } from "./ExecutiveCockpit";
+import { ObjectiveWeightsPanel, ObjectiveScorecard } from "./ObjectiveWeightsPanel";
+import { OptimizationBeforeAfter } from "./OptimizationBeforeAfter";
+import { ObjectiveDecisionLab } from "./ObjectiveDecisionLab";
 import { ScenarioProvider } from "./ScenarioContext";
 import { ConnectedScenarioBar, ConnectedCockpit, ConnectedLogistics } from "./ConnectedExperience";
 import {
@@ -71,6 +74,8 @@ import {
   OptimizationDemoResponse,
   OptimizationStrategy,
   runOptimizationDemo,
+  DEFAULT_OBJECTIVE_WEIGHTS,
+  normalizeOptimizationRequest,
 } from "../lib/optimizationApi";
 
 type View =
@@ -107,6 +112,7 @@ const DEFAULT: OptimizationDemoRequest = {
   raw_price_adjustment_pct: 0,
   shortage_penalty_multiplier: 1,
   service_target_pct: 95,
+  objective_weights: { ...DEFAULT_OBJECTIVE_WEIGHTS },
 };
 const COLORS = [
   "#13876d",
@@ -363,6 +369,15 @@ function PlanningWorkspaceBody() {
   const [mobileNav, setMobileNav] = useState(false);
   const [request, setRequest] = useState<OptimizationDemoRequest>(DEFAULT);
   const [result, setResult] = useState<OptimizationDemoResponse | null>(null);
+  const appliedResult = useRef<OptimizationDemoResponse | null>(null);
+  const [comparisonReference, setComparisonReference] = useState<OptimizationDemoResponse | null>(null);
+  const referencePinned = useRef(false);
+  const [pinned, setPinned] = useState(false);
+  const acceptResult = (data: OptimizationDemoResponse) => {
+    if (!referencePinned.current) setComparisonReference(appliedResult.current || data);
+    appliedResult.current = data;
+    setResult(data);
+  };
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
   const [engineOnline, setEngineOnline] = useState<boolean | null>(null);
@@ -399,13 +414,18 @@ function PlanningWorkspaceBody() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
   async function solve(next: OptimizationDemoRequest) {
+    const weights = normalizeOptimizationRequest(next).objective_weights!;
+    if (!Object.values(weights).some(weight => weight > 0)) {
+      setError("At least one objective weight must be greater than zero.");
+      return;
+    }
     const id = ++runId.current;
     setBusy(true);
     setError("");
     try {
       const data = await runOptimizationDemo(next);
       if (id === runId.current) {
-        setResult(data);
+        acceptResult(data);
         setEngineOnline(true);
       }
     } catch {
@@ -550,7 +570,9 @@ function PlanningWorkspaceBody() {
   }, [searchOpen, inspector, alerts]);
   const plan = result?.selected_plan;
   const dirty =
-    !!result && JSON.stringify(request) !== JSON.stringify(result.input);
+    !!result && JSON.stringify(normalizeOptimizationRequest(request)) !== JSON.stringify(normalizeOptimizationRequest(result.input));
+  const objectiveWeights = { ...DEFAULT_OBJECTIVE_WEIGHTS, ...request.objective_weights };
+  const validWeights = Object.values(objectiveWeights).some(weight => weight > 0);
   const chart = useMemo(() => {
     if (!history || !forecast) return [];
     const actual = history.months.slice(-12).map((row) => ({
@@ -668,6 +690,8 @@ function PlanningWorkspaceBody() {
     const next = {
       ...DEFAULT,
       strategy: request.strategy,
+      objective_weights: { ...DEFAULT_OBJECTIVE_WEIGHTS, ...request.objective_weights },
+      shortage_penalty_multiplier: request.shortage_penalty_multiplier,
       ...(type === "demand"
         ? {
             demand_adjustment_pct: 15,
@@ -960,7 +984,7 @@ function PlanningWorkspaceBody() {
           {(view === "overview" || view === "lab") && (
             <div className={`metrics ${busy ? "refreshing" : ""}`}>
               <Metric
-                label="Modeled expected cost"
+                label="Expected cost + modeled penalties"
                 value={plan ? money(plan.expected_total_cost) : "--"}
                 icon={Wallet}
                 note={
@@ -1356,8 +1380,12 @@ function PlanningWorkspaceBody() {
               </div>
             </>
           )}
+          {view === "lab" && <ObjectiveWeightsPanel weights={objectiveWeights} legacyMultiplier={request.shortage_penalty_multiplier} busy={busy} onChange={weights => setRequest(current => ({ ...current, objective_weights: weights }))} onRun={() => solve(request)} onReset={() => setRequest(current => ({ ...current, shortage_penalty_multiplier: 1, objective_weights: { ...DEFAULT_OBJECTIVE_WEIGHTS } }))} />}
+          {view === "lab" && <OptimizationBeforeAfter reference={comparisonReference} current={result} pinned={pinned} dirty={dirty} onTogglePin={() => { referencePinned.current = !referencePinned.current; setPinned(referencePinned.current); }} onUseCurrent={() => { if (appliedResult.current) { setComparisonReference(appliedResult.current); referencePinned.current = true; setPinned(true); } }} />}
+          <ObjectiveDecisionLab active={view === "lab"} applied={result} currentInput={request} dirty={dirty} busy={busy} onApply={data => { runId.current++; setBusy(false); acceptResult(data); setRequest(normalizeOptimizationRequest(data.input)); setError(""); notify("Tested plan and its frozen preferences applied. No daily re-scheduling performed."); }} />
           {view === "lab" && (
             <>
+              <ObjectiveScorecard plan={plan} dirty={dirty} />
               <div className="lab-grid">
                 <section className="surface control-surface">
                   <Heading
@@ -1414,14 +1442,6 @@ function PlanningWorkspaceBody() {
                           max: 99.5,
                           step: 0.5,
                           unit: "%",
-                        },
-                        {
-                          key: "shortage_penalty_multiplier",
-                          label: "Shortage penalty",
-                          min: 0.25,
-                          max: 3,
-                          step: 0.25,
-                          unit: "x",
                         },
                       ] as const
                     ).map((c) => (
@@ -1484,7 +1504,7 @@ function PlanningWorkspaceBody() {
                   </div>
                   <button
                     className="button green run-button"
-                    disabled={busy}
+                    disabled={busy || !validWeights}
                     onClick={() => solve(request)}
                   >
                     {busy ? (
@@ -1570,6 +1590,7 @@ function PlanningWorkspaceBody() {
                           <th>Expected service</th>
                           <th>Worst service</th>
                           <th>Shortage</th>
+                          <th>Policy objective</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1584,6 +1605,7 @@ function PlanningWorkspaceBody() {
                             <td>{nf(s.expected_service_level_pct, 2)}%</td>
                             <td>{nf(s.worst_service_level_pct, 2)}%</td>
                             <td>{nf(s.expected_shortage_tons, 1)} t</td>
+                            <td>{s.optimized_weighted_score === undefined ? "Re-run required" : nf(s.optimized_weighted_score, 1)}<small className="objective-term-kind">{s.mode === "deterministic" ? "Base case" : s.mode === "robust" ? "Worst case" : "Expected"}</small></td>
                           </tr>
                         ))}
                       </tbody>
@@ -1610,8 +1632,8 @@ function PlanningWorkspaceBody() {
               </div>
               <div className="bottom-grid">
                 <section className="surface">
-                  <Heading eyebrow="COST ANATOMY" name="Where the money goes">
-                    <span className="label-chip">USD / modeled</span>
+                  <Heading eyebrow="COST ANATOMY" name="Unweighted cost & penalties">
+                    <span className="label-chip">USD assumptions / not weighted</span>
                   </Heading>
                   <div className="cost-breakdown">
                     {plan &&
@@ -2024,7 +2046,7 @@ function PlanningWorkspaceBody() {
                         onClick={() => {
                           runId.current++;
                           setBusy(false);
-                          setResult(run.result);
+                          acceptResult(run.result);
                           setRequest(run.result.input);
                           setError("");
                           navigate("lab");

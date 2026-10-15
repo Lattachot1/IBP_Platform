@@ -10,7 +10,7 @@ import { dayLabel, port, shipmentState } from '../lib/logisticsDemo';
 
 const FactoryTwin = dynamic(() => import('./FactoryTwin'), { ssr: false });
 const WorldGlobe = dynamic(() => import('./WorldGlobe'), { ssr: false });
-type Navigate = (view: 'executive' | 'timeline' | 'logistics') => void;
+type Navigate = (view: 'executive' | 'timeline' | 'logistics' | 'lab') => void;
 const n = (value: number, digits = 0) => value.toLocaleString('en-US', { maximumFractionDigits: digits });
 const money = (value: number) => `$${n(value / 1e6, 2)}M`;
 const delta = (value: number, suffix = '') => `${value > 0 ? '+' : ''}${n(value, 1)}${suffix}`;
@@ -33,6 +33,7 @@ export function ConnectedScenarioBar({ navigate, readOnly = false }: { navigate:
       <Tool label="Reset shared scenario" disabled={readOnly} onClick={() => { if (window.confirm('Reset all shared planning, shipment and assumption edits?')) s.reset(); }}><RotateCcw size={16} /></Tool>
       <Tool label="Export shared scenario" onClick={s.exportScenario} disabled={!!s.previewPlan}><Download size={16} /></Tool>
       <button className="button dark" onClick={() => navigate('timeline')}><CalendarRange size={15} />Edit shared Gantt</button>
+      <button className="button" onClick={() => navigate('lab')}><Layers3 size={15} />Objective priorities</button>
     </div>
     <div className="connected-status"><span role="status">{readOnly ? 'Shared draft retained. Replay frames are previews until applied.' : s.notice}</span><span>No OT / {s.assumptions.lag} calendar-day release lag / 7-day evaluation tail</span></div>
     {deferred > 0 && <p className="connected-caution">{n(deferred)} t of receipts beyond the evaluation horizon. Excluded acquisition/freight is deferred exposure, not savings.</p>}

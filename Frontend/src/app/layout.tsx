@@ -5,6 +5,8 @@ import "./manual-planning.css";
 import "./logistics.css";
 import "./executive.css";
 import "./connected.css";
+import "./objective-weights.css";
+import "./objective-decisions.css";
 
 export const metadata: Metadata = {
   title: "UBE IBP Platform | One Platform, One Data, One Plan",
