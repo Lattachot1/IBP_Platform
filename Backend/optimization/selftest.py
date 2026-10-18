@@ -15,6 +15,7 @@ and fulfillment figures.
 import sys
 from datetime import datetime
 
+from optimization import manual
 from optimization.engine import _load_config, solve
 from optimization.schemas import OptimizeRequest
 
@@ -152,6 +153,40 @@ def validate(label, res, cfg, req):
               "%d vs %d" % (produced[row["grade"]], row["produced"]))
 
 
+def evaluate_roundtrip(label, res, req):
+    """The editable-Gantt evaluator must accept every solver plan unchanged
+    (zero conflicts, same grade sequence and reactor statuses)."""
+    draft = manual.draft_from_result(res)
+    ev = manual.evaluate({**req.model_dump(), **draft})
+    check("%s evaluator accepts solver plan" % label, ev["conflicts"] == 0,
+          "; ".join(c["text"] for c in ev["checks"] if c["level"] == "conflict"))
+    mains_a = [d["parts"][-1]["grade"] for d in res["days"]]
+    mains_b = [d["parts"][-1]["grade"] for d in ev["days"]]
+    check("%s evaluator keeps grade sequence" % label, mains_a == mains_b)
+    pairs_a = [(d["p1"], d["p2"]) for d in res["days"]]
+    pairs_b = [(d["p1"], d["p2"]) for d in ev["days"]]
+    check("%s evaluator keeps reactor statuses" % label, pairs_a == pairs_b,
+          next((("d%d %s vs %s" % (i, a, b)) for i, (a, b) in enumerate(zip(pairs_a, pairs_b)) if a != b), ""))
+    return draft
+
+
+def evaluate_broken(label, draft, req):
+    """A deliberately broken edit must be flagged: shorten a campaign below
+    its min-run and drop every cleaning window."""
+    camps = [dict(c) for c in draft["campaigns"]]
+    victim = next((i for i, c in enumerate(camps[1:-1], start=1) if c["days"] >= 2), None)
+    if victim is None:
+        print("  (skip broken-plan check: no interior campaign to shorten)")
+        return
+    camps[victim]["days"] -= 1
+    camps[victim + 1]["days"] += 1
+    ev = manual.evaluate({**req.model_dump(), "campaigns": camps, "cleanings": [], "pair_plan": draft["pair_plan"]})
+    print("  broken plan -> %s (%d conflicts)" % (ev["kpis"]["status"], ev["conflicts"]))
+    check("%s evaluator flags broken plan" % label, ev["conflicts"] >= 1)
+    flagged_days = {d for c in ev["checks"] if c["level"] == "conflict" for d in c["days"]}
+    check("%s evaluator reports conflict days" % label, len(flagged_days) > 0)
+
+
 def scenario(label, **kwargs):
     print("\n=== %s ===" % label)
     req = OptimizeRequest(**kwargs)
@@ -162,6 +197,8 @@ def scenario(label, **kwargs):
         check("%s feasible" % label, False, str(res.get("message")))
         return res
     validate(label, res, _load_config(), req)
+    draft = evaluate_roundtrip(label, res, req)
+    evaluate_broken(label, draft, req)
     return res
 
 

@@ -25,7 +25,8 @@ from pydantic import BaseModel
 import database
 from forecasting import MODEL_NAME, generate_forecast, go_round, round2
 from optimization import engine as optimization_engine
-from optimization.schemas import OptimizeRequest
+from optimization import manual as optimization_manual
+from optimization.schemas import EvaluateRequest, OptimizeRequest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -527,6 +528,25 @@ def handle_optimize(req: OptimizeRequest) -> dict:
         for grade, value in (req.demand or {}).items()
     })
     return optimization_engine.solve(req.model_dump())
+
+
+@app.post("/api/v1/optimize/evaluate")
+def handle_optimize_evaluate(req: EvaluateRequest) -> dict:
+    """Check a hand-edited plan (editable Gantt) against the plant rules.
+
+    Same scope inputs as /api/v1/optimize plus campaigns, cleanings and the
+    reactor-pair plan. Answers in the solver's response shape with
+    `checks` of level "conflict" for every broken rule, so the page draws
+    the edited plan with the same Gantt and highlights the offending days.
+    """
+    _reject_non_finite({
+        ("demand." + grade): value
+        for grade, value in (req.demand or {}).items()
+    })
+    try:
+        return optimization_manual.evaluate(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.post("/api/v1/retrain")

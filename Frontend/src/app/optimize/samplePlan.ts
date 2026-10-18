@@ -37,11 +37,13 @@ export interface PlanDay {
   reactors: ReactorCell[];
   rx: string;
   note: string;
+  conflict?: boolean;   // evaluator only: a rule is broken on this day
 }
 
 export interface CheckItem {
-  level: 'ok' | 'warn';
+  level: 'ok' | 'warn' | 'conflict';
   text: string;
+  days?: number[];      // evaluator only: day indexes involved
 }
 
 export interface Kpis {
@@ -63,8 +65,10 @@ export interface FulfillRow {
 }
 
 export interface OptimizeResult {
-  status: string;
-  mode: string;
+  status: string;        // 'feasible' | 'infeasible' | 'unknown' | 'conflicts' (evaluator)
+  mode: string;          // 'cspat' | 'sample' | 'manual'
+  message?: string;      // set when status is not 'feasible'
+  conflicts?: number;    // evaluator only
   solve_s: number;
   horizon_days: number;
   start_date: string;
