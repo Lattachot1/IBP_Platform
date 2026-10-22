@@ -1,0 +1,1162 @@
+<title>TSL Production Optimizer</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" />
+<style>
+  :root {
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --surface2: #f0efec;
+    --line: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.1);
+    --hatch: rgba(11, 11, 11, 0.16);
+    --ink: #0b0b0b;
+    --ink2: #52514e;
+    --muted: #898781;
+    --good: #0ca30c;
+    --warn: #fab219;
+    --crit: #d03b3b;
+
+    --s1: #2a78d6;
+    --s1i: #ffffff; /* BR150  */
+    --s2: #eb6834;
+    --s2i: #ffffff; /* BR150B */
+    --s3: #1baf7a;
+    --s3i: #0b0b0b; /* BR360B */
+    --s4: #eda100;
+    --s4i: #0b0b0b; /* VCR412 */
+    --s5: #e87ba4;
+    --s5i: #0b0b0b; /* VCR617 */
+    --s6: #008300;
+    --s6i: #ffffff; /* BR150L */
+
+    --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --surface2: #242423;
+      --line: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255, 255, 255, 0.1);
+      --hatch: rgba(255, 255, 255, 0.14);
+      --ink: #ffffff;
+      --ink2: #c3c2b7;
+      --muted: #898781;
+
+      --s1: #3987e5;
+      --s1i: #ffffff;
+      --s2: #d95926;
+      --s2i: #ffffff;
+      --s3: #199e70;
+      --s3i: #ffffff;
+      --s4: #c98500;
+      --s4i: #1a1a19;
+      --s5: #d55181;
+      --s5i: #ffffff;
+      --s6: #008300;
+      --s6i: #ffffff;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface2: #242423;
+    --line: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255, 255, 255, 0.1);
+    --hatch: rgba(255, 255, 255, 0.14);
+    --ink: #ffffff;
+    --ink2: #c3c2b7;
+    --muted: #898781;
+
+    --s1: #3987e5;
+    --s1i: #ffffff;
+    --s2: #d95926;
+    --s2i: #ffffff;
+    --s3: #199e70;
+    --s3i: #ffffff;
+    --s4: #c98500;
+    --s4i: #1a1a19;
+    --s5: #d55181;
+    --s5i: #ffffff;
+    --s6: #008300;
+    --s6i: #ffffff;
+    color-scheme: dark;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 14px;
+    line-height: 1.55;
+    padding-inline: 16px;
+    padding-block: 0 40px;
+  }
+  :focus-visible {
+    outline: 2px solid var(--ink);
+    outline-offset: 2px;
+  }
+  button,
+  select,
+  input {
+    font-family: inherit;
+    font-size: inherit;
+    color: inherit;
+  }
+  .mono {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ---- top bar ---- */
+  .topbar {
+    margin-inline: -16px;
+    padding: 10px 20px 0;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 20px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-weight: 600;
+  }
+  .brand .logo {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    background: var(--ink);
+    color: var(--page);
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+  }
+  .mockchip {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    border: 1px solid var(--warn);
+    color: var(--ink2);
+    border-radius: 999px;
+    padding: 1px 8px;
+  }
+  .mockchip::before {
+    content: "⚠ ";
+  }
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin-left: auto;
+  }
+  .tabs a {
+    text-decoration: none;
+    color: var(--ink2);
+    padding: 8px 12px 10px;
+    font-weight: 500;
+    border-bottom: 2px solid transparent;
+  }
+  .tabs a[aria-current="page"] {
+    color: var(--ink);
+    border-bottom-color: var(--ink);
+    font-weight: 600;
+  }
+  .tabs a:hover {
+    color: var(--ink);
+  }
+
+  /* ---- shell ---- */
+  .shell {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 20px;
+    padding-top: 20px;
+    max-width: 1480px;
+    margin-inline: auto;
+  }
+  @media (max-width: 900px) {
+    .shell {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  /* ---- input rail ---- */
+  .rail {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 16px;
+    min-width: 0;
+  }
+  .panel > h2 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .field {
+    margin-bottom: 10px;
+  }
+  .field:last-child {
+    margin-bottom: 0;
+  }
+  .field label {
+    display: block;
+    font-size: 12px;
+    color: var(--ink2);
+    margin-bottom: 3px;
+  }
+  .field select,
+  .field input {
+    width: 100%;
+    background: var(--page);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 6px 8px;
+  }
+  .fieldrow {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .demandrow {
+    display: grid;
+    grid-template-columns: 52px 1fr;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+  .demandrow .gcode {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    flex: none;
+  }
+  .demandrow input {
+    width: 100%;
+    background: var(--page);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 5px 8px;
+    font-family: var(--font-mono);
+  }
+  .runbtn {
+    width: 100%;
+    background: var(--ink);
+    color: var(--page);
+    border: 1px solid var(--ink);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+  }
+  .runbtn:hover {
+    opacity: 0.9;
+  }
+  .runbtn[disabled] {
+    opacity: 0.6;
+    cursor: progress;
+  }
+  .railnote {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .solverstat {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--ink2);
+    background: var(--surface2);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .solverstat .st {
+    font-weight: 600;
+    color: var(--good);
+  }
+  .solverstat .st::before {
+    content: "✓ ";
+  }
+
+  /* ---- KPI strip ---- */
+  .stage {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+  }
+  .stagehead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 8px 14px;
+  }
+  .stagehead h1 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .stagehead .sub {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .kpis {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 10px;
+  }
+  .tile {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 12px 14px;
+    min-width: 0;
+  }
+  .tile .lab {
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .tile .val {
+    font-size: 24px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .tile .val small {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink2);
+  }
+  .tile .foot {
+    font-size: 12px;
+    color: var(--ink2);
+    margin-top: 1px;
+  }
+  .tile.warn .val {
+    color: var(--ink);
+  }
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 999px;
+    padding: 1px 8px;
+    background: var(--surface2);
+    color: var(--ink2);
+  }
+  .badge.ok {
+    color: var(--good);
+  }
+  .badge.wn {
+    color: var(--ink2);
+  }
+  .badge.wn::before {
+    content: "⚠";
+    color: var(--warn);
+  }
+  .badge.ok::before {
+    content: "✓";
+  }
+
+  /* ---- gantt ---- */
+  .ganttwrap {
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+  .gantt {
+    min-width: 1358px;
+  }
+  .gantt-head {
+    display: grid;
+    grid-template-columns: 70px repeat(28, 46px);
+    margin-bottom: 4px;
+  }
+  .gantt-head .d {
+    text-align: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    line-height: 1.3;
+    color: var(--muted);
+    padding-bottom: 4px;
+  }
+  .gantt-head .d b {
+    display: block;
+    font-weight: 600;
+    color: var(--ink2);
+  }
+  .gantt-head .d.wknd b {
+    color: var(--muted);
+  }
+  .gantt-row {
+    display: grid;
+    grid-template-columns: 70px repeat(28, 46px);
+    gap: 0;
+  }
+  .glabel {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--muted);
+    text-align: right;
+    padding-right: 7px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-width: 0;
+  }
+  .gcell {
+    min-width: 0;
+    height: 46px;
+    padding: 0 1px;
+    border-radius: 5px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: default;
+  }
+  .gcell.wknd {
+    background: var(--surface2);
+  }
+  .gblk {
+    flex: 1;
+    min-height: 0;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    font-weight: 600;
+    line-height: 1.25;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .gblk small {
+    font-weight: 500;
+    font-size: 9.5px;
+    opacity: 0.85;
+  }
+  .gblk.half {
+    flex-direction: row;
+    gap: 3px;
+    font-size: 9.5px;
+    white-space: nowrap;
+  }
+  .gblk.state-clean {
+    background: repeating-linear-gradient(45deg, transparent 0 4px, var(--hatch) 4px 6px), var(--surface2);
+    color: var(--ink2);
+  }
+  .gblk.state-idle {
+    border: 1px dashed var(--baseline);
+    background: transparent;
+    color: var(--muted);
+  }
+  .gcap {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .paircap {
+    grid-column: 1 / -1;
+    font-size: 12px;
+    color: var(--muted);
+    padding: 2px 0 6px;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin: 0 0 12px;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink2);
+  }
+  .legend .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+  }
+
+  /* reactor states moved into the gantt rows themselves */
+
+  /* ---- fulfillment ---- */
+  .frow {
+    display: grid;
+    grid-template-columns: 64px minmax(0, 1fr) 170px;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 9px;
+  }
+  .frow:last-child {
+    margin-bottom: 0;
+  }
+  .frow .gcode {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .ftrack {
+    height: 16px;
+    background: var(--surface2);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .ffill {
+    height: 100%;
+    border-radius: 4px 4px 4px 4px;
+    background: var(--fillc);
+    min-width: 2px;
+  }
+  .fmeta {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink2);
+    white-space: nowrap;
+  }
+  .fmeta .short {
+    color: var(--warn);
+    font-weight: 600;
+  }
+  @media (max-width: 640px) {
+    .frow {
+      grid-template-columns: 56px minmax(0, 1fr);
+    }
+    .fmeta {
+      grid-column: 2;
+      white-space: normal;
+    }
+  }
+
+  /* ---- constraints ---- */
+  .checks {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px 18px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  @media (max-width: 760px) {
+    .checks {
+      grid-template-columns: 1fr;
+    }
+  }
+  .checks li {
+    display: flex;
+    gap: 8px;
+    font-size: 13px;
+    color: var(--ink2);
+    min-width: 0;
+  }
+  .checks .mk {
+    flex: none;
+    font-weight: 700;
+  }
+  .checks .mk.ok {
+    color: var(--good);
+  }
+  .checks .mk.wn {
+    color: var(--warn);
+  }
+
+  /* ---- day table ---- */
+  details.daytable summary {
+    cursor: pointer;
+    font-weight: 600;
+  }
+  details.daytable summary:hover {
+    color: var(--ink2);
+  }
+  .twrap {
+    overflow-x: auto;
+    margin-top: 12px;
+  }
+  table.days {
+    border-collapse: collapse;
+    min-width: 780px;
+    width: 100%;
+  }
+  table.days th {
+    text-align: left;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    border-bottom: 1px solid var(--baseline);
+    padding: 6px 10px 6px 0;
+  }
+  table.days td {
+    border-bottom: 1px solid var(--line);
+    padding: 6px 10px 6px 0;
+    font-size: 13px;
+    vertical-align: top;
+  }
+  table.days td.mono {
+    font-size: 12.5px;
+  }
+  td .chip {
+    display: inline-block;
+    font-size: 11px;
+    font-weight: 600;
+    border-radius: 4px;
+    padding: 1px 7px;
+  }
+  .chip.run {
+    background: var(--surface2);
+    color: var(--ink2);
+  }
+  .chip.chg {
+    background: var(--baseline);
+    color: var(--ink);
+  }
+  td.wknd,
+  td .wknd {
+    color: var(--muted);
+  }
+  .assump {
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .assump ul {
+    margin: 6px 0 0;
+    padding-left: 18px;
+  }
+  .assump li {
+    margin-bottom: 2px;
+  }
+
+  /* ---- tooltip & toast ---- */
+  #tip {
+    position: fixed;
+    z-index: 30;
+    max-width: 280px;
+    background: var(--ink);
+    color: var(--page);
+    border-radius: 8px;
+    padding: 8px 11px;
+    font-size: 12px;
+    line-height: 1.5;
+    pointer-events: none;
+  }
+  #tip b {
+    font-family: var(--font-mono);
+  }
+  #toast {
+    position: fixed;
+    z-index: 40;
+    left: 50%;
+    transform: translateX(-50%);
+    bottom: calc(16px + env(safe-area-inset-bottom, 0px));
+    background: var(--ink);
+    color: var(--page);
+    border-radius: 10px;
+    padding: 10px 16px;
+    font-size: 13px;
+    font-weight: 500;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+    max-width: min(480px, calc(100vw - 32px));
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * {
+      transition: none !important;
+      animation: none !important;
+    }
+  }
+</style>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">IBP</span> UBE IBP Platform · TSL <span class="mockchip">MOCK</span></div>
+  <nav class="tabs" aria-label="Main navigation">
+    <a href="#">Dashboard</a>
+    <a href="#">Simulate</a>
+    <a href="#" aria-current="page">Optimization</a>
+    <a href="#">Scenarios</a>
+  </nav>
+</header>
+
+<div class="shell">
+  <!-- ================= input rail ================= -->
+  <aside class="rail" aria-label="Plan parameters">
+    <div class="panel">
+      <h2>Plan scope</h2>
+      <div class="field">
+        <label for="f-horizon">Horizon</label>
+        <select id="f-horizon">
+          <option selected>28 days · Oct 5 – Nov 1, 2026</option>
+          <option>14 days</option>
+          <option>56 days</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="f-objective">Objective</label>
+        <select id="f-objective">
+          <option selected>Maximize fulfilled demand</option>
+          <option>Minimize changeover losses</option>
+          <option>Balance (adjustable weights)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Initial state (first day of the plan)</h2>
+      <div class="fieldrow">
+        <div class="field">
+          <label for="f-grade">Grade in production</label>
+          <select id="f-grade">
+            <option selected>BR150</option>
+            <option>BR150L</option>
+            <option>BR150B</option>
+            <option>BR360B</option>
+            <option>VCR-412</option>
+            <option>VCR-617</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-remain">Min-run days remaining</label>
+          <input id="f-remain" type="number" value="2" min="0" />
+        </div>
+      </div>
+      <div class="fieldrow">
+        <div class="field">
+          <label for="f-rx12">RX1–2 age (production days)</label>
+          <input id="f-rx12" type="number" value="54" min="0" />
+        </div>
+        <div class="field">
+          <label for="f-rx34">RX3–4 age (production days)</label>
+          <input id="f-rx34" type="number" value="0" min="0" />
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Monthly demand (tons)</h2>
+      <div id="demand-inputs"></div>
+      <p class="railnote">Defaults pulled from <span class="mono">GET /api/v1/forecast</span>; the planner can override them.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Calendar &amp; Solver</h2>
+      <div class="field">
+        <label for="f-holiday">Company holidays in horizon</label>
+        <select id="f-holiday">
+          <option selected>None (weekends handled automatically)</option>
+          <option>Pick from calendar…</option>
+        </select>
+      </div>
+      <div class="fieldrow">
+        <div class="field">
+          <label for="f-solver">Solver</label>
+          <select id="f-solver">
+            <option selected>CP-SAT (OR-Tools)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-tlim">Time limit (s)</label>
+          <input id="f-tlim" type="number" value="30" min="5" max="300" />
+        </div>
+      </div>
+      <button class="runbtn" id="run" type="button">Run optimization</button>
+      <div class="solverstat" style="margin-top: 10px"><span class="st">Feasible</span> <span class="mono">1.8 s</span> · 12,482 constraints · gap 0.0%</div>
+    </div>
+  </aside>
+
+  <!-- ================= main stage ================= -->
+  <main class="stage">
+    <div class="stagehead">
+      <h1>28-Day Production Plan</h1>
+      <span class="sub">Oct 5 – Nov 1, 2026 · starts from BR150 (previous campaign) · 6 product groups</span>
+    </div>
+
+    <div class="kpis" id="kpis"></div>
+
+    <section class="panel" aria-label="Daily production Gantt">
+      <h2>Daily production schedule — one row per reactor (Plant + RX1–RX4)</h2>
+      <div class="legend" id="legend"></div>
+      <div class="ganttwrap">
+        <div class="gantt">
+          <div class="gantt-head" id="ghead"></div>
+          <div class="gantt-row" id="grow"></div>
+        </div>
+      </div>
+      <p class="gcap">Plant row = the plant's grade that day · RX1–RX4 rows = per-reactor status (producing / cleaning / standby) · two-tone block = changeover day (uses that pair's special ceiling) · grey columns = Sat–Sun (production allowed, but no VCR→BR150 change)</p>
+    </section>
+
+    <section class="panel" aria-label="Demand fulfillment">
+      <h2>Fulfillment by grade (produced vs 28-day demand)</h2>
+      <div id="fulfill"></div>
+    </section>
+
+    <section class="panel" aria-label="Constraint check results">
+      <h2>Constraint check</h2>
+      <ul class="checks" id="checks"></ul>
+    </section>
+
+    <section class="panel details daytable" aria-label="Day-by-day table">
+      <details class="daytable">
+        <summary>Full day-by-day plan (28 rows)</summary>
+        <div class="twrap">
+          <table class="days">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Grades (tons)</th>
+                <th>Type</th>
+                <th>Reactor</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+  </main>
+</div>
+
+<div id="tip" hidden></div>
+<div id="toast" role="status" hidden></div>
+
+<script>
+  /* ================= data ================= */
+  var SLOTS = ["BR150", "BR150B", "BR360B", "VCR412", "VCR617", "BR150L"];
+  var GRADE = {
+    BR150: { slot: 1, disp: "BR150" },
+    BR150B: { slot: 2, disp: "BR150B" },
+    BR360B: { slot: 3, disp: "BR360B" },
+    VCR412: { slot: 4, disp: "VCR-412" },
+    VCR617: { slot: 5, disp: "VCR-617" },
+    BR150L: { slot: 6, disp: "BR150L" },
+  };
+  var DEMAND = { BR150: 2600, BR150L: 900, BR150B: 1300, BR360B: 400, VCR412: 500, VCR617: 1000 };
+
+  /* 28-day plan: g = grades produced, t = tons per grade, chg = changeover day */
+  var PLAN = [
+    { dt: "5 Oct", wd: "Mo", g: ["BR150"], t: [230], chg: false, rx: "RX1-2", note: "Continuing the previous campaign (min-run already satisfied)" },
+    { dt: "6 Oct", wd: "Tu", g: ["BR150"], t: [230], chg: false, rx: "RX1-2", note: "" },
+    { dt: "7 Oct", wd: "We", g: ["BR150", "BR150B"], t: [100, 134], cap: 234, chg: true, rx: "RX1-2", note: "Grade change per the 11-pair table" },
+    { dt: "8 Oct", wd: "Th", g: ["BR150B"], t: [239], chg: false, rx: "RX1-2", note: "" },
+    { dt: "9 Oct", wd: "Fr", g: ["BR150B"], t: [239], chg: false, rx: "RX1-2", note: "" },
+    { dt: "10 Oct", wd: "Sa", g: ["BR150B"], t: [239], chg: false, rx: "RX1-2", wknd: true, note: "Saturday — production continues" },
+    { dt: "11 Oct", wd: "Su", g: ["BR150B"], t: [239], chg: false, rx: "RX1-2", wknd: true, note: "RX1-2 age reaches exactly 60 days" },
+    { dt: "12 Oct", wd: "Mo", g: ["BR150B"], t: [239], chg: false, rx: "RX3-4", note: "RX1-2 enter 7-day cleaning → RX3-4 take over" },
+    { dt: "13 Oct", wd: "Tu", g: ["BR150B", "BR360B"], t: [115, 110], cap: 225, chg: true, rx: "RX3-4", note: "BR150B→BR360B direct change allowed" },
+    { dt: "14 Oct", wd: "We", g: ["BR360B"], t: [230], chg: false, rx: "RX3-4", note: "min-run ≥ 1 day" },
+    { dt: "15 Oct", wd: "Th", g: ["BR360B", "BR150"], t: [115, 110], cap: 225, chg: true, rx: "RX3-4", note: "loss for this pair still assumed at −5 t" },
+    { dt: "16 Oct", wd: "Fr", g: ["BR150"], t: [230], chg: false, rx: "RX3-4", note: "" },
+    { dt: "17 Oct", wd: "Sa", g: ["BR150"], t: [230], chg: false, rx: "RX3-4", wknd: true, note: "" },
+    { dt: "18 Oct", wd: "Su", g: ["BR150"], t: [230], chg: false, rx: "RX3-4", wknd: true, note: "RX1-2 cleaning complete (7 days)" },
+    { dt: "19 Oct", wd: "Mo", g: ["BR150", "VCR412"], t: [120, 80], cap: 200, chg: true, rx: "RX1-4", note: "RX1-2 back from cleaning (age 0) · VCR starts — RX3-4 age = 7 ≤ 15" },
+    { dt: "20 Oct", wd: "Tu", g: ["VCR412"], t: [230], chg: false, rx: "RX1-4", note: "" },
+    { dt: "21 Oct", wd: "We", g: ["VCR412"], t: [230], chg: false, rx: "RX1-4", note: "" },
+    { dt: "22 Oct", wd: "Th", g: ["VCR412", "VCR617"], t: [95, 95], cap: 190, chg: true, rx: "RX1-4", note: "Switch within the VCR group (all 4 reactors running)" },
+    { dt: "23 Oct", wd: "Fr", g: ["VCR617"], t: [220], chg: false, rx: "RX1-4", note: "" },
+    { dt: "24 Oct", wd: "Sa", g: ["VCR617"], t: [220], chg: false, rx: "RX1-4", wknd: true, note: "" },
+    { dt: "25 Oct", wd: "Su", g: ["VCR617"], t: [220], chg: false, rx: "RX1-4", wknd: true, note: "" },
+    { dt: "26 Oct", wd: "Mo", g: ["VCR617"], t: [220], chg: false, rx: "RX1-4", note: "VCR ends — 412+617 total 8 days · RX1-2 age = 8 < 50" },
+    { dt: "27 Oct", wd: "Tu", g: ["VCR617", "BR150"], t: [30, 65], cap: 95, chg: true, rx: "RX1-2", note: "Monday switch out of VCR (holiday rule) · RX3-4 sent to 7-day cleaning" },
+    { dt: "28 Oct", wd: "We", g: ["BR150"], t: [230], chg: false, rx: "RX1-2", note: "" },
+    { dt: "29 Oct", wd: "Th", g: ["BR150"], t: [230], chg: false, rx: "RX1-2", note: "" },
+    { dt: "30 Oct", wd: "Fr", g: ["BR150"], t: [230], chg: false, rx: "RX1-2", note: "" },
+    { dt: "31 Oct", wd: "Sa", g: ["BR150"], t: [230], chg: false, rx: "RX1-2", wknd: true, note: "" },
+    { dt: "1 Nov", wd: "Su", g: ["BR150"], t: [230], chg: false, rx: "RX1-2", wknd: true, note: "End of horizon — RX1-2 age = 14 ≤ 60" },
+  ];
+
+  var CHECKS = [
+    ["ok", "All 6 changeovers are in the Allow_GradeChange table (BR150→BR150B, BR150B→BR360B, BR360B→BR150, BR150→VCR-412, VCR-412→VCR-617, VCR-617→BR150)"],
+    ["ok", "Min-run: BR150B 5 days (≥4) · BR360B 1 day (≥1) · VCR-412 2 days (≥2) · VCR-617 4 days (≥2) · BR150 3 days (≥2)"],
+    ["ok", "Changeover-day ceilings respected — 234 / 225 / 200 / 190 / 95 tons per the transition table"],
+    ["ok", "VCR-412 + VCR-617 total 8 days (≥8) — the 412-only case still awaits client confirmation"],
+    ["ok", "No VCR→BR150 change on holidays — VCR ends Monday Oct 26, switches out Tuesday"],
+    ["ok", "RX ages: VCR start RX3-4 = 7 ≤ 15 · VCR end RX1-2 = 8 < 50 · plan end 14 ≤ 60"],
+    ["ok", "No overlapping cleanings — RX1-2: Oct 12–18 / RX3-4: Oct 27–Nov 2"],
+    ["wn", "Loss for BR360B→BR150 is an assumed −5 t (no official figure from production yet)"],
+  ];
+
+  var PAIR_STATUS = [].concat(Array(7).fill(["prod", "idle"]), Array(7).fill(["clean", "prod"]), Array(8).fill(["prod", "prod"]), Array(6).fill(["prod", "clean"]));
+  var PAIR_NOTES = {
+    "RX1-2": "Age 54→60 · cleaning 7 days (Oct 12–18) · back in production, age 1→14 at plan end",
+    "RX3-4": "Standby at age 0 · substitute production age 1→7 · VCR-start age 7 ≤ 15 · sent to 7-day cleaning after VCR (until Nov 2)",
+  };
+  var REACTOR_ROWS = ["RX1", "RX2", "RX3", "RX4"];
+  var STATUS_EN = { prod: "Producing", clean: "Cleaning", idle: "Standby" };
+
+  /* ================= helpers ================= */
+  function fmt(n) {
+    return n.toLocaleString("en-US");
+  }
+  function el(id) {
+    return document.getElementById(id);
+  }
+  function gradeColor(g) {
+    return "var(--s" + GRADE[g].slot + ")";
+  }
+  function gradeInk(g) {
+    return "var(--s" + GRADE[g].slot + "i)";
+  }
+
+  /* ================= KPI tiles ================= */
+  (function () {
+    var produced = {},
+      total = 0,
+      chg = 0;
+    SLOTS.forEach(function (g) {
+      produced[g] = 0;
+    });
+    PLAN.forEach(function (d) {
+      d.g.forEach(function (g, i) {
+        produced[g] += d.t[i];
+        total += d.t[i];
+      });
+      if (d.chg) chg++;
+    });
+    var met = 0,
+      dem = 0,
+      short = 0;
+    SLOTS.forEach(function (g) {
+      met += Math.min(produced[g], DEMAND[g]);
+      dem += DEMAND[g];
+      short += Math.max(0, DEMAND[g] - produced[g]);
+    });
+    var pct = Math.round((met / dem) * 1000) / 10;
+    var tiles = [
+      ["Total production", fmt(total) + " <small>t</small>", "28 days · avg " + fmt(Math.round(total / 28)) + " t/day"],
+      ["Fulfillment", pct.toFixed(1) + "<small>%</small>", "Σ min(produced, demand) / Σ demand"],
+      ["Shortage", fmt(short) + " <small>t</small>", "mostly BR150L, not scheduled in this plan"],
+      ["Changeover days", String(chg) + " <small>days</small>", "6 of the 11 transition-table pairs"],
+      ["Solver", "1.8 <small>s</small>", "CP-SAT · Feasible · gap 0.0%"],
+    ];
+    el("kpis").innerHTML = tiles
+      .map(function (t) {
+        return '<div class="tile"><div class="lab">' + t[0] + '</div><div class="val num">' + t[1] + '</div><div class="foot">' + t[2] + "</div></div>";
+      })
+      .join("");
+  })();
+
+  /* ================= legend ================= */
+  el("legend").innerHTML =
+    SLOTS.map(function (g) {
+      return '<span><i class="dot" style="background:' + gradeColor(g) + '"></i>' + GRADE[g].disp + "</span>";
+    }).join("") +
+    '<span><i class="dot" style="background:repeating-linear-gradient(45deg,transparent 0 3px,var(--hatch) 3px 5px),var(--surface2);border:1px solid var(--line)"></i>Cleaning</span>' +
+    '<span><i class="dot" style="border:1px dashed var(--baseline);background:transparent"></i>Standby (not yet used)</span>';
+
+  /* ================= gantt (Plant + RX1-RX4) ================= */
+  (function () {
+    function dayBlocks(d) {
+      return d.g
+        .map(function (g, k) {
+          if (d.chg) {
+            return '<div class="gblk half" style="background:' + gradeColor(g) + ";color:" + gradeInk(g) + '">' + GRADE[g].disp + "·" + fmt(d.t[k]) + "</div>";
+          }
+          return '<div class="gblk" style="background:' + gradeColor(g) + ";color:" + gradeInk(g) + '">' + GRADE[g].disp + "<small>" + fmt(d.t[k]) + " t</small></div>";
+        })
+        .join("");
+    }
+    function cells(rowLabel, rid, statusOf) {
+      var html = '<div class="glabel">' + rowLabel + "</div>";
+      html += PLAN.map(function (d, i) {
+        var status = statusOf(i);
+        var content = status === "prod" ? dayBlocks(d) : '<div class="gblk state-' + status + '">' + STATUS_EN[status] + "</div>";
+        return '<div class="gcell' + (d.wknd ? " wknd" : "") + '" data-i="' + i + '"' + (rid ? ' data-rid="' + rid + '" data-status="' + status + '"' : "") + ">" + content + "</div>";
+      }).join("");
+      if (rid === "RX2" || rid === "RX4") {
+        html += '<div class="paircap">' + PAIR_NOTES[rid === "RX2" ? "RX1-2" : "RX3-4"] + "</div>";
+      }
+      return html;
+    }
+
+    var head = ['<div class="glabel"></div>'].concat(
+      PLAN.map(function (d) {
+        return '<div class="d' + (d.wknd ? " wknd" : "") + '"><b>' + d.dt.split(" ")[0] + "</b>" + (d.dt.indexOf(" ") > -1 ? d.dt.split(" ")[1] : "") + " · " + d.wd + "</div>";
+      }),
+    );
+    el("ghead").innerHTML = head.join("");
+
+    el("grow").innerHTML =
+      cells("Plant", null, function () {
+        return "prod";
+      }) +
+      REACTOR_ROWS.map(function (rid) {
+        var pairIndex = rid === "RX1" || rid === "RX2" ? 0 : 1;
+        return cells(rid, rid, function (i) {
+          return PAIR_STATUS[i][pairIndex];
+        });
+      }).join("");
+
+    var tip = el("tip");
+    el("grow").addEventListener("mousemove", function (ev) {
+      var cell = ev.target.closest(".gcell");
+      if (!cell) {
+        tip.hidden = true;
+        return;
+      }
+      var d = PLAN[+cell.dataset.i];
+      var lines = "<b>" + d.dt + " · " + d.wd + (d.wknd ? " · holiday" : "") + "</b><br>";
+      if (cell.dataset.rid) {
+        lines += cell.dataset.rid + " — today's status: " + (STATUS_EN[cell.dataset.status] || cell.dataset.status) + "<br>";
+      }
+      d.g.forEach(function (g, k) {
+        lines += GRADE[g].disp + ": " + fmt(d.t[k]) + " t";
+        if (d.chg) lines += " (total ≤ " + fmt(d.cap) + ")";
+        lines += "<br>";
+      });
+      lines += "Reactor: " + d.rx + (d.note ? "<br>" + d.note : "");
+      tip.innerHTML = lines;
+      tip.hidden = false;
+      var x = Math.min(ev.clientX + 14, window.innerWidth - 296);
+      var y = Math.min(ev.clientY + 14, window.innerHeight - 150);
+      tip.style.left = x + "px";
+      tip.style.top = y + "px";
+    });
+    el("grow").addEventListener("mouseleave", function () {
+      tip.hidden = true;
+    });
+  })();
+
+  /* ================= fulfillment ================= */
+  (function () {
+    var produced = {};
+    SLOTS.forEach(function (g) {
+      produced[g] = 0;
+    });
+    PLAN.forEach(function (d) {
+      d.g.forEach(function (g, i) {
+        produced[g] += d.t[i];
+      });
+    });
+    el("fulfill").innerHTML = SLOTS.map(function (g) {
+      var p = produced[g],
+        dm = DEMAND[g];
+      var w = Math.min(p / dm, 1) * 100;
+      var meta;
+      if (p < dm) meta = fmt(p) + " / " + fmt(dm) + ' t · <span class="short">short ' + fmt(dm - p) + "</span>";
+      else meta = fmt(p) + " / " + fmt(dm) + " t · +" + fmt(p - dm);
+      return (
+        '<div class="frow"><span class="gcode"><i class="dot" style="background:' +
+        gradeColor(g) +
+        '"></i>' +
+        GRADE[g].disp +
+        "</span>" +
+        '<div class="ftrack"><div class="ffill" style="width:' +
+        w.toFixed(1) +
+        "%;--fillc:" +
+        gradeColor(g) +
+        '"></div></div>' +
+        '<span class="fmeta num">' +
+        meta +
+        "</span></div>"
+      );
+    }).join("");
+  })();
+
+  /* ================= checks ================= */
+  el("checks").innerHTML = CHECKS.map(function (c) {
+    return '<li><span class="mk ' + c[0] + '">' + (c[0] === "ok" ? "✓" : "⚠") + "</span><span>" + c[1] + "</span></li>";
+  }).join("");
+
+  /* ================= day table ================= */
+  el("tbody").innerHTML = PLAN.map(function (d) {
+    var grades = d.g
+      .map(function (g, k) {
+        return GRADE[g].disp + " " + fmt(d.t[k]) + (d.chg && d.g.length > 1 ? (k === 0 ? " + " : " ≤ total " + fmt(d.cap)) : "");
+      })
+      .join(" ");
+    return (
+      "<tr><td" +
+      (d.wknd ? ' class="mono wknd"' : ' class="mono"') +
+      ">" +
+      d.dt +
+      " · " +
+      d.wd +
+      "</td>" +
+      '<td class="mono">' +
+      grades +
+      "</td>" +
+      '<td><span class="chip ' +
+      (d.chg ? "chg" : "run") +
+      '">' +
+      (d.chg ? "Changeover" : "Production") +
+      "</span></td>" +
+      '<td class="mono">' +
+      d.rx +
+      "</td>" +
+      "<td" +
+      (d.wknd ? ' class="wknd"' : "") +
+      ">" +
+      (d.note || "—") +
+      "</td></tr>"
+    );
+  }).join("");
+
+  /* ================= demand inputs ================= */
+  el("demand-inputs").innerHTML = SLOTS.map(function (g) {
+    return '<div class="demandrow"><span class="gcode"><i class="dot" style="background:' + gradeColor(g) + '"></i>' + GRADE[g].disp + "</span>" + '<input type="number" value="' + DEMAND[g] + '" aria-label="demand ' + GRADE[g].disp + '"></div>';
+  }).join("");
+
+  /* ================= run button (mock) ================= */
+  var toastTimer = null;
+  el("run").addEventListener("click", function () {
+    var b = el("run"),
+      toast = el("toast");
+    b.disabled = true;
+    b.textContent = "Solving…";
+    setTimeout(function () {
+      b.disabled = false;
+      b.textContent = "Run optimization";
+      toast.textContent = "Demo mode — this mock is not wired to a real solver, so the result stays the same sample plan. The real build calls POST /api/v1/optimize and re-renders.";
+      toast.hidden = false;
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(function () {
+        toast.hidden = true;
+      }, 5000);
+    }, 900);
+  });
+</script>

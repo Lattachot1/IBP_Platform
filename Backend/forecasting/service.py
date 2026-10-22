@@ -23,6 +23,9 @@ import pandas as pd
 
 from . import data
 from .backtest import MODELS, _naive12_scale, _wape
+from .models import (
+    forecast_croston, forecast_sba, forecast_seasonal_naive, forecast_tsb,
+)
 
 log = logging.getLogger("ibp.forecast")
 
@@ -34,24 +37,32 @@ INTERVAL_LEVEL_PCT = 80
 MIN_TRAIN_MONTHS = 24
 
 
-def _stepped_folds(y: np.ndarray, horizon: int, n_folds: int) -> list:
-    """Monthly-stepped expanding-window folds, each with a full horizon test."""
-    n = len(y)
+def _stepped_folds(series, horizon: int, n_folds: int) -> list:
+    """Monthly-stepped expanding-window folds, each with a full horizon test.
+
+    Folds are series slices - month-aware models may use the calendar index.
+    """
+    n = len(series)
     folds = []
     for k in range(horizon, n_folds + horizon):
         cutoff = n - k
         if cutoff < MIN_TRAIN_MONTHS:
             continue
-        folds.append((y[:cutoff], y[cutoff:cutoff + horizon]))
+        folds.append((series.iloc[:cutoff], series.values[cutoff:cutoff + horizon]))
     return folds
 
 
-def train_grade(series) -> dict:
+def train_grade(series, extra_candidates=None) -> dict:
     """Backtest every model on one grade and crown a champion."""
-    y = np.asarray(series.values, dtype=float)
-    folds = _stepped_folds(y, HORIZON, FOLD_MONTHS)
+    folds = _stepped_folds(series, HORIZON, FOLD_MONTHS)
+    candidates = dict(MODELS)
+    if extra_candidates:
+        candidates.update(extra_candidates)
+    candidates["MED-ENS"] = (
+        lambda fns: (lambda s, h: np.median(np.array([f(s, h) for f in fns]), axis=0))
+    )(list(candidates.values()))
     evaluations = {}
-    for name, fn in MODELS.items():
+    for name, fn in candidates.items():
         # Fit ONCE per fold - every metric below reuses these predictions
         per_fold_pred = [fn(f[0], HORIZON) for f in folds]
         actual = np.concatenate([f[1] for f in folds])
@@ -128,9 +139,9 @@ def train_grade(series) -> dict:
         "q_hi": q_band,
         "std_q_lo": std_q,
         "std_q_hi": std_q,
-        "baseline_12": MODELS[best_name](y, MAX_HORIZON),
-        "months": len(y),
-        "avg_tons": float(y.mean()),
+        "baseline_12": candidates[best_name](series, MAX_HORIZON),
+        "months": len(series),
+        "avg_tons": float(series.mean()),
         "trained_through": str(series.index[-1]),
     }
 
@@ -170,15 +181,82 @@ def forecast(info: dict, horizon: int, demand_change_pct: float = 0.0) -> dict:
     }
 
 
+def _bu_material_components(billing, grade, max_components=2):
+    """Top-N materials by tonnage within one grade (monthly series each)."""
+    g = billing[billing["Grade"] == grade]
+    per = g.groupby(["Material Number", "_month"])["QTY(ton)"].sum()
+    totals = g.groupby("Material Number")["QTY(ton)"].sum().sort_values(ascending=False)
+    comps = {}
+    for key, _tons in totals.items():
+        if len(comps) >= max_components:
+            break
+        s = per.get(key)
+        if s is None or len(s) < 8:
+            continue
+        comps[str(key)] = s.reindex(
+            pd.period_range(s.index.min(), s.index.max(), freq="M"), fill_value=0.0
+        )
+    return comps
+
+
+def _make_bu_material(components):
+    """Bottom-up over tracked materials: per-component zoo model (re-selected
+    by the component's own backtest at every cutoff - train-only) plus the
+    seasonal benchmark on the untracked 'others' residual."""
+    from .models import _select_component
+
+    def fn(series_train, h):
+        idx = series_train.index
+        comp_preds, tracked = [], set()
+        for key, s_full in components.items():
+            s = s_full[s_full.index <= idx[-1]]
+            if len(s) < 8:
+                continue
+            tracked.add(key)
+            _, cfn = _select_component(s, horizon=h, folds=3)
+            comp_preds.append(cfn(s, h))
+        if not comp_preds:
+            return forecast_seasonal_naive(series_train, h)
+        bottom_up = np.sum(comp_preds, axis=0)
+        others = series_train.astype(float).copy()
+        for key in tracked:
+            others = others - components[key].reindex(idx, fill_value=0.0)
+        return bottom_up + forecast_seasonal_naive(others.clip(lower=0.0), h)
+
+    return fn
+
+
 def train_all(path=None) -> dict:
     """Train every pilot grade; called at startup and on retrain."""
-    series_by_grade = data.pilot_series(data.load_billing_frame(path))
+    billing = data.load_billing_frame(path)
+    series_by_grade = data.pilot_series(billing)
     if not series_by_grade:
         raise RuntimeError("no usable demand series in the billing data")
     grades = {}
     for name, series in series_by_grade.items():
         try:
-            grades[name] = train_grade(series)
+            extra = {}
+            try:
+                from .candidates import arima_models, sklearn_models, xgb_models
+                extra["ARIMA(2,1,2)"] = arima_models.make_fn(arima_models.CONFIGS["ARIMA (2,1,2)"])
+                extra["ARIMA(1,1,1)"] = arima_models.make_fn(arima_models.CONFIGS["ARIMA (1,1,1)"])
+                extra["XGB-MAE"] = xgb_models.make_fn(xgb_models.CONFIGS["single MAE d3 lr.05 sub.9 col.8"])
+                extra["RF-abs-err"] = sklearn_models.make_fn(sklearn_models.CONFIGS["RF direct abs-err d4 leaves=1 sqrt"])
+            except Exception as exc:
+                log.warning("[Forecast] could not load candidate zoo: %s", exc)
+
+            if name in data.SPARSE_GRADES:
+                # campaign grades with many zero months -> intermittent methods
+                extra.update({
+                    "Croston": forecast_croston,
+                    "SBA (bias-corrected)": forecast_sba,
+                    "TSB": forecast_tsb,
+                })
+            else:
+                comps = _bu_material_components(billing, name)
+                if comps:
+                    extra["BU-material(top-2)"] = _make_bu_material(comps)
+            grades[name] = train_grade(series, extra)
         except Exception as exc:
             log.warning("[Forecast] skipping grade %s: %s", name, exc)
     if not grades:
