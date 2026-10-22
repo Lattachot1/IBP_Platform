@@ -5,3 +5,5 @@ pymssql>=2.2.11
 pandas>=2.2.0
 statsmodels>=0.14.1
 pulp>=2.8.0
+ortools>=9.15,<10
+pyyaml>=6.0.0

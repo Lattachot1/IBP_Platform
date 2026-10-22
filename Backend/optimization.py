@@ -65,19 +65,18 @@ SCENARIO_SPECS = {
 }
 
 SETUP_COST = 9000.0
-OVERTIME_COST = 185.0
 RAW_HOLDING_COST = 8.0
 SAFETY_GAP_COST = 85.0
 SERVICE_VIOLATION_COST = 10000.0
 NORMAL_CAPACITY = (5800.0, 5800.0)
-MAX_OVERTIME = (900.0, 900.0)
 INITIAL_RAW_INVENTORY = 1100.0
 RAW_STORAGE_CAPACITY = 5000.0
 PURCHASE_CAPACITY = (7000.0, 7000.0)
 DEFAULT_OBJECTIVE_WEIGHTS = dict.fromkeys((
-    "raw_material", "production", "setup", "overtime", "finished_goods_holding",
+    "raw_material", "production", "setup", "finished_goods_holding",
     "raw_material_holding", "shortage", "safety_stock_gap", "service_target_violation",
 ), 1.0)
+DEFAULT_OBJECTIVE_WEIGHTS["overtime"] = 0.0  # Legacy request field, never an active decision.
 PENALTY_COMPONENTS = {"shortage", "safety_stock_gap", "service_target_violation"}
 MODEL_SOURCE_SHA = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
@@ -87,8 +86,9 @@ def model_signature() -> str:
     payload = {
         "source": MODEL_SOURCE_SHA, "periods": PERIODS,
         "products": [asdict(product) for product in PRODUCTS], "scenarios": SCENARIO_SPECS,
-        "costs": [SETUP_COST, OVERTIME_COST, RAW_HOLDING_COST, SAFETY_GAP_COST, SERVICE_VIOLATION_COST],
-        "limits": [NORMAL_CAPACITY, MAX_OVERTIME, INITIAL_RAW_INVENTORY, RAW_STORAGE_CAPACITY, PURCHASE_CAPACITY],
+        "costs": [SETUP_COST, RAW_HOLDING_COST, SAFETY_GAP_COST, SERVICE_VIOLATION_COST],
+        "limits": [NORMAL_CAPACITY, INITIAL_RAW_INVENTORY, RAW_STORAGE_CAPACITY, PURCHASE_CAPACITY],
+        "overtime_allowed": False,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True, allow_nan=False).encode()).hexdigest()
 
@@ -102,9 +102,30 @@ def normalize_objective_weights(values: dict | None = None) -> dict:
     for key, value in weights.items():
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 20:
             raise ValueError("objective weight %s must be finite and between 0 and 20" % key)
+    weights["overtime"] = 0.0
     if not any(weights.values()):
         raise ValueError("at least one objective weight must be positive")
     return weights
+
+
+def default_holding_costs() -> dict:
+    return {"finished_goods": {p.code: p.holding_cost for p in PRODUCTS}, "raw_material": RAW_HOLDING_COST}
+
+
+def normalize_holding_costs(values: dict | None = None) -> dict:
+    if values is None:
+        values = {}
+    if not isinstance(values, dict) or set(values) - {"finished_goods", "raw_material"}:
+        raise ValueError("Unknown holding cost field")
+    base = default_holding_costs()
+    fg = values.get("finished_goods", {})
+    if not isinstance(fg, dict) or set(fg) - set(base["finished_goods"]):
+        raise ValueError("Unknown finished-goods grade")
+    rates = {"finished_goods": {**base["finished_goods"], **fg}, "raw_material": values.get("raw_material", base["raw_material"])}
+    for value in [rates["raw_material"], *rates["finished_goods"].values()]:
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 <= value <= 100000:
+            raise ValueError("Holding costs must be finite rates between 0 and 100000 USD/t/month")
+    return rates
 
 
 def _effective_weights(request: dict) -> dict:
@@ -153,7 +174,6 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
 
     production = pulp.LpVariable.dicts("production", (codes, periods), lowBound=0)
     active = pulp.LpVariable.dicts("active", (codes, periods), cat="Binary")
-    overtime = pulp.LpVariable.dicts("overtime", periods, lowBound=0)
     purchase = pulp.LpVariable.dicts("purchase", periods, lowBound=0)
     raw_inventory = pulp.LpVariable.dicts("raw_inventory", periods, lowBound=0)
     inventory = pulp.LpVariable.dicts("inventory", (scenario_names, codes, periods), lowBound=0)
@@ -168,10 +188,9 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
     for t in periods:
         model += (
             pulp.lpSum(production[code][t] for code in codes)
-            <= normal_capacity[t] + overtime[t],
+            <= normal_capacity[t],
             "capacity_%s" % t,
         )
-        model += overtime[t] <= MAX_OVERTIME[t], "overtime_limit_%s" % t
         model += purchase[t] <= PURCHASE_CAPACITY[t], "purchase_limit_%s" % t
 
         raw_used = pulp.lpSum(product_by_code[code].bom * production[code][t] for code in codes)
@@ -231,13 +250,14 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
             model += total_shortage <= (1.0 - service_target) * total_demand + service_violation[s]
 
     weights = _effective_weights(request)
+    holding = normalize_holding_costs(request.get("holding_costs"))
     common_cost = (
         pulp.lpSum(
             weights["production"] * product_by_code[code].production_cost * production[code][t]
             + weights["setup"] * SETUP_COST * active[code][t]
             for code in codes for t in periods
         )
-        + pulp.lpSum(weights["overtime"] * OVERTIME_COST * overtime[t] + weights["raw_material_holding"] * RAW_HOLDING_COST * raw_inventory[t] for t in periods)
+        + pulp.lpSum(weights["raw_material_holding"] * holding["raw_material"] * raw_inventory[t] for t in periods)
     )
 
     scenario_costs: Dict[str, pulp.LpAffineExpression] = {}
@@ -246,7 +266,7 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
             common_cost
             + pulp.lpSum(weights["raw_material"] * scenarios[s]["raw_prices"][t] * purchase[t] for t in periods)
             + pulp.lpSum(
-                weights["finished_goods_holding"] * product_by_code[code].holding_cost * inventory[s][code][t]
+                weights["finished_goods_holding"] * holding["finished_goods"][code] * inventory[s][code][t]
                 + weights["shortage"] * product_by_code[code].shortage_cost * shortage[s][code][t]
                 + weights["safety_stock_gap"] * SAFETY_GAP_COST * safety_gap[s][code][t]
                 for code in codes for t in periods
@@ -279,7 +299,7 @@ def _solve(mode: str, request: dict, scenarios: dict) -> dict:
             code: [int(round(pulp.value(active[code][t]) or 0.0)) for t in periods]
             for code in codes
         },
-        "overtime": [_round(pulp.value(overtime[t]), 4) for t in periods],
+        "overtime": [0.0 for _ in periods],
         "purchase": [_round(pulp.value(purchase[t]), 4) for t in periods],
         "raw_inventory": [_round(pulp.value(raw_inventory[t]), 4) for t in periods],
         "normal_capacity": normal_capacity,
@@ -291,6 +311,7 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
     decisions = solved["decisions"]
     product_by_code = {p.code: p for p in PRODUCTS}
     weights = _effective_weights(request)
+    holding = normalize_holding_costs(request.get("holding_costs"))
     scenario_rows = []
     scenario_details = {}
 
@@ -312,8 +333,7 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
 
         for t in range(len(PERIODS)):
             components["raw_material"] += decisions["purchase"][t] * scenario["raw_prices"][t]
-            components["overtime"] += decisions["overtime"][t] * OVERTIME_COST
-            components["raw_material_holding"] += decisions["raw_inventory"][t] * RAW_HOLDING_COST
+            components["raw_material_holding"] += decisions["raw_inventory"][t] * holding["raw_material"]
 
         for code, product in product_by_code.items():
             opening_inventory = product.initial_inventory
@@ -330,7 +350,7 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
 
                 components["production"] += produced * product.production_cost
                 components["setup"] += decisions["active"][code][t] * SETUP_COST
-                components["finished_goods_holding"] += ending_inventory * product.holding_cost
+                components["finished_goods_holding"] += ending_inventory * holding["finished_goods"][code]
                 components["shortage"] += short * product.shortage_cost
                 components["safety_stock_gap"] += safety_gap * SAFETY_GAP_COST
                 total_demand += demand
@@ -406,7 +426,7 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
     monthly_rows = []
     for t, period in enumerate(PERIODS):
         production_total = sum(decisions["production"][p.code][t] for p in PRODUCTS)
-        available_capacity = decisions["normal_capacity"][t] + decisions["overtime"][t]
+        available_capacity = decisions["normal_capacity"][t]
         monthly_rows.append({
             "period": period,
             "base_demand_tons": _round(sum(scenarios["base"]["demands"][p.code][t] for p in PRODUCTS)),
@@ -429,6 +449,8 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
         "worst_weighted_score": _round(max(row["weighted_score"] for row in scenario_rows)),
         "optimized_weighted_score": _round(solved["weighted_objective"]),
         "objective_weights": weights,
+        "holding_cost_rates": holding,
+        "overtime_allowed": False,
         "weighted_breakdown": {key: _round(value) for key, value in weighted_components.items()},
         "expected_service_level_pct": _round(expected_service, 2),
         "worst_service_level_pct": _round(min(row["service_level_pct"] for row in scenario_rows), 2),
@@ -444,7 +466,8 @@ def _evaluate(mode: str, solved: dict, request: dict, scenarios: dict) -> dict:
 
 def build_demo_comparison(request: dict) -> dict:
     """Solve and compare deterministic, stochastic and robust demo plans."""
-    request = {**request, "objective_weights": normalize_objective_weights(request.get("objective_weights"))}
+    request = {**request, "objective_weights": normalize_objective_weights(request.get("objective_weights")),
+               "holding_costs": normalize_holding_costs(request.get("holding_costs"))}
     scenarios = _scenario_data(request)
     results = {}
     for mode in ("deterministic", "stochastic", "robust"):
@@ -477,6 +500,7 @@ def build_demo_comparison(request: dict) -> dict:
 
     return {
         "prototype_status": "illustrative_assumptions",
+        "overtime_allowed": False,
         "model_signature": model_signature(),
         "selected_strategy": selected_mode,
         "currency": "USD",
@@ -498,7 +522,7 @@ def build_demo_comparison(request: dict) -> dict:
         "assumptions_requiring_confirmation": [
             "Planning decisions are monthly for a two-month horizon.",
             "Six product grades share one aggregate production capacity.",
-            "Production, purchase timing and overtime are controllable decisions.",
+            "Production and purchase timing are controllable decisions. Overtime is prohibited.",
             "Demand and BD price scenarios are correlated low/base/high cases.",
             "Costs, BOM factors, safety stocks and capacities are illustrative.",
             "Objective weights express preferences, not accounting prices or hard priorities.",
@@ -509,7 +533,7 @@ def build_demo_comparison(request: dict) -> dict:
         "constraint_summary": [
             "Finished-goods inventory balance by grade and scenario",
             "Raw-material balance with grade-specific BOM consumption",
-            "Normal capacity plus bounded overtime",
+            "Normal capacity only; no overtime",
             "Minimum production batch and grade activation",
             "Raw-material storage and monthly purchase capacity",
             "Service-level requirement matched to the selected risk strategy",

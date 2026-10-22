@@ -6,7 +6,6 @@ export const OBJECTIVE_TERMS = [
   { key: 'raw_material', label: 'Raw-material purchases', kind: 'expense' },
   { key: 'production', label: 'Production', kind: 'expense' },
   { key: 'setup', label: 'Campaign activation', kind: 'expense' },
-  { key: 'overtime', label: 'Prototype overtime', kind: 'expense' },
   { key: 'finished_goods_holding', label: 'Finished-goods holding', kind: 'expense' },
   { key: 'raw_material_holding', label: 'Raw-material holding', kind: 'expense' },
   { key: 'shortage', label: 'Unserved demand / shortage', kind: 'penalty' },
@@ -16,6 +15,11 @@ export const OBJECTIVE_TERMS = [
 export type ObjectiveTerm = typeof OBJECTIVE_TERMS[number]['key'];
 export type ObjectiveWeights = Record<ObjectiveTerm, number>;
 export const DEFAULT_OBJECTIVE_WEIGHTS = Object.fromEntries(OBJECTIVE_TERMS.map(t => [t.key, 1])) as ObjectiveWeights;
+export const DEFAULT_HOLDING_COSTS = {
+  finished_goods: { BR150: 13, BR150L: 14, BR150B: 13, VCR617: 16, VCR412: 17, BR360B: 15 } as Record<string, number>,
+  raw_material: 8,
+};
+export interface HoldingCosts { finished_goods: Record<string, number>; raw_material: number; }
 
 export interface OptimizationDemoRequest {
   strategy: OptimizationStrategy;
@@ -25,6 +29,7 @@ export interface OptimizationDemoRequest {
   shortage_penalty_multiplier: number;
   service_target_pct: number;
   objective_weights?: ObjectiveWeights;
+  holding_costs?: HoldingCosts;
 }
 
 export function normalizeOptimizationRequest(request: OptimizationDemoRequest): OptimizationDemoRequest {
@@ -36,6 +41,10 @@ export function normalizeOptimizationRequest(request: OptimizationDemoRequest): 
     shortage_penalty_multiplier: request.shortage_penalty_multiplier,
     service_target_pct: request.service_target_pct,
     objective_weights: Object.fromEntries(OBJECTIVE_TERMS.map(t => [t.key, request.objective_weights?.[t.key] ?? 1])) as ObjectiveWeights,
+    holding_costs: {
+      finished_goods: Object.fromEntries(Object.entries(DEFAULT_HOLDING_COSTS.finished_goods).map(([code, rate]) => [code, request.holding_costs?.finished_goods?.[code] ?? rate])),
+      raw_material: request.holding_costs?.raw_material ?? DEFAULT_HOLDING_COSTS.raw_material,
+    },
   };
 }
 
@@ -88,6 +97,8 @@ export interface ScenarioOutcome {
 }
 
 export interface SelectedOptimizationPlan extends StrategyComparison {
+  overtime_allowed?: boolean;
+  holding_cost_rates?: HoldingCosts;
   total_purchase_tons: number;
   cost_breakdown: Record<string, number>;
   weighted_breakdown?: Record<string, number>;
@@ -106,6 +117,7 @@ export interface ScenarioDefinition {
 }
 
 export interface OptimizationDemoResponse {
+  overtime_allowed?: boolean;
   prototype_status: string;
   model_signature?: string;
   selected_strategy: OptimizationStrategy;

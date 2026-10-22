@@ -17,6 +17,15 @@ const fixture = {
 const trial = { ...structuredClone(fixture), input: tested };
 assert(comparableTrial(fixture, trial, 'shortage'));
 assert.equal(inputChanges(fixture, trial).weights[0].key, 'shortage');
+assert.equal(input.holding_costs.raw_material, 8);
+const zeroHolding = structuredClone(trial);
+zeroHolding.input.holding_costs.raw_material = 0;
+assert.equal(comparableTrial(fixture, zeroHolding, 'shortage'), false, 'Holding rates are frozen experiment inputs');
+assert.deepEqual(inputChanges(fixture, zeroHolding).conditions, ['holding_costs']);
+const mutableTrial = trialRequest(input, 'shortage', 2);
+mutableTrial.holding_costs.finished_goods.BR150 = 0;
+assert.equal(input.holding_costs.finished_goods.BR150, 13, 'Trial rates must not alias the applied request');
+assert(!('overtime' in normalizeOptimizationRequest({ ...input, objective_weights: { ...input.objective_weights, overtime: 20 } }).objective_weights));
 for (const mutate of [r => r.model_signature = 'b'.repeat(64), r => r.input.capacity_adjustment_pct = -5, r => r.input.objective_weights.production = 2, r => r.scenario_definitions[0].probability = 0.5, r => r.horizon.push('2026-11')]) {
   const changed = structuredClone(trial); mutate(changed); assert.equal(comparableTrial(fixture, changed, 'shortage'), false);
 }

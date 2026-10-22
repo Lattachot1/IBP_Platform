@@ -24,6 +24,11 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import database
 import optimization
+from plant_scheduling import engine as plant_engine, manual as plant_manual
+from plant_scheduling.schemas import OptimizeRequest, EvaluateRequest
+from integrated_planning import engine as integrated_engine
+from integrated_planning.schemas import IntegratedRequest
+from integrated_planning import forecast_bridge
 from forecasting import MODEL_NAME, generate_forecast, go_round, round2
 
 logging.basicConfig(
@@ -34,11 +39,9 @@ logging.basicConfig(
 log = logging.getLogger("ibp.main")
 
 # ----------------------------------------------------------------------------
-# Business Rules Constants (unchanged from the legacy Go engine)
+# Business Rules Constants (legacy simulation, normal shifts only)
 # ----------------------------------------------------------------------------
 NORMAL_CAPACITY_LIMIT = 10500.0
-OVERTIME_EXTRA_CAPACITY = 1500.0
-OVERTIME_COST_THB = 120000.0
 PRODUCT_UNIT_PRICE_THB = 1000.0
 
 # ----------------------------------------------------------------------------
@@ -69,7 +72,7 @@ class SimulateRequest(BaseModel):
     scenario_name: str = ""
     base_demand: float = 0.0
     demand_change_pct: float = 0.0
-    enable_ot: bool = False
+    enable_ot: bool = Field(default=False, deprecated=True, description="Legacy field; ignored. Overtime is prohibited.")
     created_by: str = ""
 
 
@@ -78,7 +81,7 @@ class ObjectiveWeights(BaseModel):
     raw_material: float = Field(default=1.0, ge=0, le=20)
     production: float = Field(default=1.0, ge=0, le=20)
     setup: float = Field(default=1.0, ge=0, le=20)
-    overtime: float = Field(default=1.0, ge=0, le=20)
+    overtime: float = Field(default=0.0, ge=0, le=20, deprecated=True)
     finished_goods_holding: float = Field(default=1.0, ge=0, le=20)
     raw_material_holding: float = Field(default=1.0, ge=0, le=20)
     shortage: float = Field(default=1.0, ge=0, le=20)
@@ -87,8 +90,21 @@ class ObjectiveWeights(BaseModel):
 
     @model_validator(mode="after")
     def require_active_weight(self):
+        self.overtime = 0.0
         if not any(self.model_dump().values()):
             raise ValueError("At least one objective weight must be positive")
+        return self
+
+
+class HoldingCosts(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False, strict=True)
+    finished_goods: dict[str, float] = Field(default_factory=lambda: optimization.default_holding_costs()["finished_goods"])
+    raw_material: float = Field(default=optimization.RAW_HOLDING_COST, ge=0, le=100000)
+
+    @model_validator(mode="after")
+    def valid_rates(self):
+        rates = optimization.normalize_holding_costs(self.model_dump())
+        self.finished_goods = rates["finished_goods"]
         return self
 
 
@@ -100,6 +116,7 @@ class OptimizationDemoRequest(BaseModel):
     shortage_penalty_multiplier: float = Field(default=1.0, ge=0.25, le=3.0)
     service_target_pct: float = Field(default=95.0, ge=85.0, le=99.5)
     objective_weights: ObjectiveWeights = Field(default_factory=ObjectiveWeights)
+    holding_costs: HoldingCosts = Field(default_factory=HoldingCosts)
 
 
 # ----------------------------------------------------------------------------
@@ -264,8 +281,9 @@ def handle_health():
         "forecast_engine": _engine_status(),
         "planning_rules": {
             "normal_capacity": NORMAL_CAPACITY_LIMIT,
-            "overtime_capacity": OVERTIME_EXTRA_CAPACITY,
-            "overtime_cost_thb": OVERTIME_COST_THB,
+            "overtime_allowed": False,
+            "overtime_capacity": 0,
+            "overtime_cost_thb": 0,
             "product_price_thb": PRODUCT_UNIT_PRICE_THB,
         },
     }
@@ -301,9 +319,6 @@ def handle_simulate(req: SimulateRequest) -> Scenario:
     # 2. Compute production capacity limit & costs
     capacity_limit = NORMAL_CAPACITY_LIMIT
     extra_cost = 0.0
-    if req.enable_ot:
-        capacity_limit += OVERTIME_EXTRA_CAPACITY
-        extra_cost += OVERTIME_COST_THB
 
     # 3. Compute production feasibility & constraints
     actual_produce = min(forecast, capacity_limit)
@@ -325,8 +340,6 @@ def handle_simulate(req: SimulateRequest) -> Scenario:
     # 6. Constraint status (shortage formatted without separators, like Go)
     if forecast > capacity_limit:
         constraint_status = "Capacity Overload Bottleneck (Shortage: %d units)" % round(shortage_qty)
-    elif req.enable_ot:
-        constraint_status = "Feasible (Overtime Shift Activated)"
     else:
         constraint_status = "Feasible / Normal Capacity"
 
@@ -338,7 +351,7 @@ def handle_simulate(req: SimulateRequest) -> Scenario:
         lower_bound=lower,
         upper_bound=upper,
         capacity_limit=capacity_limit,
-        enable_ot=req.enable_ot,
+        enable_ot=False,
         actual_produce=actual_produce,
         shortage_qty=shortage_qty,
         service_level_pct=service_level_pct,
@@ -426,6 +439,58 @@ def handle_optimization_demo(req: OptimizationDemoRequest):
     data are connected.
     """
     return optimization.build_demo_comparison(req.model_dump())
+
+
+@app.post("/api/v1/plant/schedule")
+def handle_plant_schedule(req: OptimizeRequest):
+    try:
+        return plant_engine.solve(req.model_dump())
+    except (ImportError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/plant/evaluate")
+def handle_plant_evaluate(req: EvaluateRequest):
+    try:
+        return plant_manual.evaluate(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/planning/pilot")
+def handle_integrated_demo(horizon_days: int = Query(default=28, ge=7, le=62)):
+    return integrated_engine.demo(horizon_days)
+
+
+@app.post("/api/v1/planning/integrated")
+def handle_integrated_plan(req: IntegratedRequest):
+    try:
+        return integrated_engine.solve(req)
+    except (ImportError, RuntimeError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/planning/validate")
+def handle_integrated_validation(req: IntegratedRequest):
+    return req.model_dump()
+
+
+@app.get("/api/v1/planning/demand-forecast/status")
+def handle_planning_forecast_status():
+    return forecast_bridge.availability(_require_engine())
+
+
+@app.post("/api/v1/planning/demand-forecast")
+def handle_planning_forecast(req: forecast_bridge.ForecastBridgeRequest):
+    engine = _require_engine()
+    try:
+        return forecast_bridge.apply_forecast(req, engine)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 # ----------------------------------------------------------------------------

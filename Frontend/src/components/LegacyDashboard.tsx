@@ -55,7 +55,6 @@ export default function LegacyDashboard() {
   const [scenarioName, setScenarioName] = useState<string>('Demand Surge (+20%) Analysis');
   const [baseDemand, setBaseDemand] = useState<number>(10000);
   const [demandChangePct, setDemandChangePct] = useState<number>(20);
-  const [enableOT, setEnableOT] = useState<boolean>(false);
   const [createdBy, setCreatedBy] = useState<string>('Sales & Operations Consensus');
 
   // Execution State
@@ -96,12 +95,12 @@ export default function LegacyDashboard() {
   };
 
   // Local fallback calculation when backend is not reached
-  const runLocalSimulation = useCallback((name: string, base: number, pct: number, ot: boolean, creator: string): ScenarioResult => {
+  const runLocalSimulation = useCallback((name: string, base: number, pct: number, creator: string): ScenarioResult => {
     const forecast = Math.round(base * (1 + pct / 100) * 100) / 100;
     const lower = Math.round(forecast * 0.95 * 100) / 100;
     const upper = Math.round(forecast * 1.05 * 100) / 100;
-    const capLimit = ot ? 12000 : 10500;
-    const extraCost = ot ? 120000 : 0;
+    const capLimit = 10500;
+    const extraCost = 0;
     const actual = Math.min(forecast, capLimit);
     const shortage = Math.max(0, forecast - actual);
     const serviceLevel = forecast > 0 ? Math.round((actual / forecast) * 10000) / 100 : 100;
@@ -110,8 +109,6 @@ export default function LegacyDashboard() {
     let status = 'Feasible / Normal Capacity';
     if (forecast > capLimit) {
       status = `Capacity Overload Bottleneck (Shortage: ${shortage.toLocaleString()} units)`;
-    } else if (ot) {
-      status = 'Feasible (Overtime Shift Activated)';
     }
 
     return {
@@ -122,7 +119,7 @@ export default function LegacyDashboard() {
       lower_bound: lower,
       upper_bound: upper,
       capacity_limit: capLimit,
-      enable_ot: ot,
+      enable_ot: false,
       actual_produce: actual,
       shortage_qty: shortage,
       service_level_pct: serviceLevel,
@@ -243,7 +240,7 @@ export default function LegacyDashboard() {
         scenario_name: scenarioName,
         base_demand: Number(baseDemand),
         demand_change_pct: Number(demandChangePct),
-        enable_ot: enableOT,
+        enable_ot: false,
         created_by: createdBy
       };
 
@@ -265,7 +262,7 @@ export default function LegacyDashboard() {
         }
       } catch {
         // Run local fallback calculation
-        result = runLocalSimulation(scenarioName, Number(baseDemand), Number(demandChangePct), enableOT, createdBy);
+        result = runLocalSimulation(scenarioName, Number(baseDemand), Number(demandChangePct), createdBy);
         setBackendOnline(false);
         showToast('Calculated using local simulation engine (Backend offline)', 'info');
       }
@@ -320,31 +317,21 @@ export default function LegacyDashboard() {
   };
 
   // Preset Handlers directly from Capstone Slide 15
-  const applyPreset = (presetType: 'base' | 'surge' | 'ot') => {
+  const applyPreset = (presetType: 'base' | 'surge') => {
     if (presetType === 'base') {
       setScenarioName('Base Plan (Normal Demand)');
       setBaseDemand(10000);
       setDemandChangePct(0);
-      setEnableOT(false);
-      const res = runLocalSimulation('Base Plan (Normal Demand)', 10000, 0, false, createdBy);
+      const res = runLocalSimulation('Base Plan (Normal Demand)', 10000, 0, createdBy);
       setCurrentResult(res);
       showToast('Loaded Preset: Base Plan (Normal Baseline)', 'info');
     } else if (presetType === 'surge') {
       setScenarioName('Demand Surge (+20%) - Constrained');
       setBaseDemand(10000);
       setDemandChangePct(20);
-      setEnableOT(false);
-      const res = runLocalSimulation('Demand Surge (+20%) - Constrained', 10000, 20, false, createdBy);
+      const res = runLocalSimulation('Demand Surge (+20%) - Constrained', 10000, 20, createdBy);
       setCurrentResult(res);
       showToast('Loaded Preset: Demand Surge (+20%) - Bottleneck Detected!', 'info');
-    } else if (presetType === 'ot') {
-      setScenarioName('Demand Surge (+20%) - With Overtime');
-      setBaseDemand(10000);
-      setDemandChangePct(20);
-      setEnableOT(true);
-      const res = runLocalSimulation('Demand Surge (+20%) - With Overtime', 10000, 20, true, createdBy);
-      setCurrentResult(res);
-      showToast('Loaded Preset: Demand Surge (+20%) with Overtime Activated', 'success');
     }
   };
 
@@ -353,10 +340,9 @@ export default function LegacyDashboard() {
     setScenarioName(s.scenario_name);
     setBaseDemand(s.base_demand);
     setDemandChangePct(s.demand_change_pct);
-    setEnableOT(s.enable_ot);
     if (s.created_by) setCreatedBy(s.created_by);
-    setCurrentResult(s);
-    showToast(`Loaded "${s.scenario_name}" into simulator`, 'info');
+    setCurrentResult(runLocalSimulation(s.scenario_name, s.base_demand, s.demand_change_pct, s.created_by || createdBy));
+    showToast(`Loaded inputs from "${s.scenario_name}"; recalculated without overtime`, 'info');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -465,12 +451,6 @@ export default function LegacyDashboard() {
             >
               Preset 2: Demand Surge (+20%, No OT)
             </button>
-            <button
-              onClick={() => applyPreset('ot')}
-              className="px-3 py-1.5 text-xs font-medium rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors"
-            >
-              Preset 3: Add Overtime (+20% + OT)
-            </button>
           </div>
         </section>
 
@@ -499,7 +479,7 @@ export default function LegacyDashboard() {
                     type="text"
                     value={scenarioName}
                     onChange={(e) => setScenarioName(e.target.value)}
-                    placeholder="e.g. Q4 Peak Surge with Weekend Shift"
+                    placeholder="e.g. Q4 Peak Demand"
                     className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50"
                   />
                 </div>
@@ -564,28 +544,7 @@ export default function LegacyDashboard() {
                   </div>
                 </div>
 
-                {/* Overtime Decision Lever */}
-                <div className="p-3.5 rounded-xl border border-blue-200 bg-blue-50/50">
-                  <div className="flex items-start gap-3">
-                    <input
-                      id="enableOTCheckbox"
-                      type="checkbox"
-                      checked={enableOT}
-                      onChange={(e) => setEnableOT(e.target.checked)}
-                      className="mt-1 h-4 w-4 rounded border-slate-300 text-blue-600 focus:ring-blue-500 cursor-pointer"
-                    />
-                    <label htmlFor="enableOTCheckbox" className="text-xs cursor-pointer">
-                      <span className="font-bold text-slate-900 block">
-                        Activate Overtime (OT) Decision Lever
-                      </span>
-                      <span className="text-slate-600 block mt-0.5 leading-relaxed">
-                        Expands plant capacity from <strong className="text-slate-800">10,500</strong> to{' '}
-                        <strong className="text-blue-700">12,000 units</strong> (+1,500 units) at an incremental cost of{' '}
-                        <strong className="text-amber-800">+120,000 THB</strong>.
-                      </span>
-                    </label>
-                  </div>
-                </div>
+                <p className="text-xs text-slate-600">Normal capacity only: 10,500 units. No overtime.</p>
 
                 {/* Created By / Role */}
                 <div>
@@ -675,7 +634,7 @@ export default function LegacyDashboard() {
                         Expected stock-out / shortage of{' '}
                         <span className="font-bold underline">{currentResult.shortage_qty.toLocaleString()} units</span>.
                         Service level degrades to{' '}
-                        <strong>{currentResult.service_level_pct.toFixed(1)}%</strong>. Consider activating Overtime lever.
+                        <strong>{currentResult.service_level_pct.toFixed(1)}%</strong>. Review delivery priorities; overtime is not available.
                       </>
                     ) : (
                       <>

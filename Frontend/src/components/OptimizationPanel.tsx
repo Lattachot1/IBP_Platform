@@ -51,7 +51,6 @@ const COST_LABELS: Record<string, string> = {
   raw_material: 'Raw material',
   production: 'Production',
   setup: 'Campaign setup',
-  overtime: 'Overtime',
   finished_goods_holding: 'FG holding',
   raw_material_holding: 'RM holding',
   shortage: 'Shortage',
@@ -274,7 +273,7 @@ export function OptimizationPanel() {
             <Kpi label="Expected total cost" value={money(selected.expected_total_cost)} detail={`${money(selected.worst_case_cost)} worst case`} icon={<Scale className="w-4 h-4" />} />
             <Kpi label="Expected service" value={`${selected.expected_service_level_pct.toFixed(1)}%`} detail={`${selected.worst_service_level_pct.toFixed(1)}% worst case`} icon={<ShieldCheck className="w-4 h-4" />} />
             <Kpi label="Expected shortage" value={`${fmt(selected.expected_shortage_tons, 1)} t`} detail={`Target ${request.service_target_pct.toFixed(1)}%`} icon={<Boxes className="w-4 h-4" />} />
-            <Kpi label="Overtime used" value={`${fmt(selected.total_overtime_tons, 1)} t`} detail={`${fmt(selected.total_purchase_tons, 0)} t raw material purchased`} icon={<Gauge className="w-4 h-4" />} />
+            <Kpi label="Raw-material purchases" value={`${fmt(selected.total_purchase_tons, 0)} t`} detail="Normal capacity only / no overtime" icon={<Gauge className="w-4 h-4" />} />
           </div>
 
           <div className="grid grid-cols-1 xl:grid-cols-[1.6fr_1fr]">
@@ -308,6 +307,7 @@ export function OptimizationPanel() {
               <p className="text-xs text-slate-500 mt-0.5">Illustrative USD values for the selected plan</p>
               <div className="mt-5 space-y-3">
                 {Object.entries(selected.cost_breakdown)
+                  .filter(([key]) => key !== 'overtime')
                   .sort((a, b) => b[1] - a[1])
                   .map(([key, value]) => (
                     <div key={key}>
@@ -338,7 +338,6 @@ export function OptimizationPanel() {
                     <th className="text-right px-3 py-3">Production</th>
                     <th className="text-right px-3 py-3">RM purchase</th>
                     <th className="text-right px-3 py-3">RM ending inv.</th>
-                    <th className="text-right px-3 py-3">Overtime</th>
                     <th className="text-right px-3 py-3">Capacity use</th>
                     <th className="text-right px-3 py-3">Campaigns</th>
                   </tr>
@@ -351,7 +350,6 @@ export function OptimizationPanel() {
                       <td className="px-3 py-3 text-right font-mono font-semibold">{fmt(row.planned_production_tons)} t</td>
                       <td className="px-3 py-3 text-right font-mono">{fmt(row.raw_material_purchase_tons)} t</td>
                       <td className="px-3 py-3 text-right font-mono">{fmt(row.ending_raw_inventory_tons)} t</td>
-                      <td className="px-3 py-3 text-right font-mono text-amber-700">{fmt(row.overtime_tons)} t</td>
                       <td className="px-3 py-3 text-right font-mono">{row.capacity_utilization_pct.toFixed(1)}%</td>
                       <td className="px-3 py-3 text-right font-mono">{row.active_campaigns}</td>
                     </tr>

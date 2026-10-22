@@ -54,7 +54,8 @@ let browser;
     assert.equal(request.raw_price_adjustment_pct, delivery.input.raw_price_adjustment_pct, 'Pending price edits excluded');
     assert.equal(request.strategy, delivery.input.strategy);
     assert.equal(request.capacity_adjustment_pct, delivery.input.capacity_adjustment_pct);
-    for (const key of Object.keys(delivery.input.objective_weights).filter(k => k !== 'shortage')) assert.equal(request.objective_weights[key], delivery.input.objective_weights[key]);
+    for (const key of Object.keys(delivery.input.objective_weights).filter(k => k !== 'shortage' && k !== 'overtime')) assert.equal(request.objective_weights[key], delivery.input.objective_weights[key]);
+    assert.deepEqual(request.holding_costs, delivery.input.holding_costs, 'Holding assumptions remain frozen');
   }
   assert.equal(await page.getByTestId('applied-weight-shortage').textContent(), '5×', 'Study does not apply results implicitly');
   assert.equal(await page.locator('.tradeoff-table tbody tr').count(), 6);

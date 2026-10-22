@@ -34,7 +34,7 @@ export function inputChanges(before: OptimizationDemoResponse, after: Optimizati
   const a = normalizeOptimizationRequest(before.input), b = normalizeOptimizationRequest(after.input);
   const fields = ['strategy', 'demand_adjustment_pct', 'capacity_adjustment_pct', 'raw_price_adjustment_pct', 'shortage_penalty_multiplier', 'service_target_pct'] as const;
   return {
-    conditions: fields.filter(key => a[key] !== b[key]),
+    conditions: [...fields.filter(key => a[key] !== b[key]), ...(JSON.stringify(a.holding_costs) !== JSON.stringify(b.holding_costs) ? ['holding_costs'] : [])],
     weights: OBJECTIVE_TERMS.filter(t => a.objective_weights![t.key] !== b.objective_weights![t.key]).map(t => ({ ...t, before: a.objective_weights![t.key], after: b.objective_weights![t.key] })),
     modelMatches: matchingModel(before, after),
   };

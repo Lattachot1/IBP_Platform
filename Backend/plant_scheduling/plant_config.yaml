@@ -1,0 +1,63 @@
+# =============================================================================
+# TSL plant rules — single source of truth for the optimizer.
+# Edit this file when the client sends new figures; no code changes needed.
+# Loaded by Backend/optimization/engine.py on every /api/v1/optimize call.
+# =============================================================================
+
+grades:
+  BR150:  { daily_capacity_tons: 230, min_run_days: 2 }
+  BR150L: { daily_capacity_tons: 220, min_run_days: 5 }
+  BR150B: { daily_capacity_tons: 239, min_run_days: 4 }
+  BR360B: { daily_capacity_tons: 230, min_run_days: 1 }
+  VCR412: { daily_capacity_tons: 230, min_run_days: 2 }
+  VCR617: { daily_capacity_tons: 220, min_run_days: 2 }
+
+vcr:
+  min_total_days: 8          # VCR-412 + VCR-617 combined per campaign
+  entry_grade: VCR412        # campaigns may only be entered via BR150 -> VCR412
+  internal_switch:           # optional 412 -> 617 tail (412-only is allowed)
+    from: VCR412
+    to: VCR617
+
+# Allowed transitions — the 11 pairs of Allow_GradeChange — with the
+# combined changeover-day ceiling in tons. assumed: true = the client
+# figure is still pending, currently an assumed -5 t loss.
+transitions:
+  - { from: BR150,  to: BR150L, ceiling_tons: 215 }
+  - { from: BR150,  to: BR150B, ceiling_tons: 234 }
+  - { from: BR150,  to: VCR412, ceiling_tons: 200 }
+  - { from: BR150L, to: BR150,  ceiling_tons: 225 }
+  - { from: BR150B, to: BR150,  ceiling_tons: 225 }
+  - { from: BR150B, to: BR360B, ceiling_tons: 225, assumed: true }
+  - { from: BR360B, to: BR150,  ceiling_tons: 225, assumed: true }
+  - { from: BR360B, to: BR150B, ceiling_tons: 234, assumed: true }
+  - { from: VCR412, to: BR150,  ceiling_tons: 225, assumed: true }
+  - { from: VCR412, to: VCR617, ceiling_tons: 190 }
+  - { from: VCR617, to: BR150,  ceiling_tons: 95 }
+
+reactor:
+  rx12_max_age_days: 60          # RX1-2 must be cleaned before 60 production days
+  rx12_max_age_at_vcr_end: 50    # RX1-2 age at the last VCR day must be < 50 (model: <= 49)
+  rx34_max_age_before_vcr: 15    # RX3-4 age on the first VCR day must be <= 15
+  cleaning_days: 7               # one pair at a time; age resets to 0 afterwards
+
+calendar:
+  # Look-ahead rule (client confirmed): grade switches may only happen
+  # Mon-Fri, never on weekends, and never while VCR is due to end on one.
+  changeover_weekdays_only: true
+  company_holidays: []           # ISO dates, e.g. ["2026-12-05", "2027-01-01"]
+
+# Modeling assumptions — update this list as the client confirms things.
+assumptions:
+  - Adapted from Neo 1f99a2d; daily factory model only, no stock, procurement, costs or delivery due dates
+  - No OT; nominal full-rate output is the default, flexible output is an explicit alternative
+  - All-grade weekday-only switching is the Neo policy; confirm against the older VCR-exit-only company rule
+  - No cleaning already in progress on day one is modeled; carry-over cleaning needs a confirmed initial-state extension
+  - Transition output split is provisional, including reactor allocation on the VCR exit day
+  - VCR-412-only campaigns are allowed (client confirmed, Oct 2026)
+  - Grade switches must end on a weekday; plan VCR so it never ends on a weekend (client confirmed)
+  - After RX1-2 cleaning, BR production may continue — VCR just has to start while RX3-4 age <= 15 (client confirmed)
+  - Min-run days count the changeover day as day 1 of the new grade (assumption, pending)
+  - Reactor age counts production days only, not cleaning days (assumption, pending)
+  - On changeover days the split between the two groups is free within the pair ceiling (assumption, pending)
+  - Final campaigns and cleanings may continue beyond the horizon; reserve their remaining obligations in the next plan

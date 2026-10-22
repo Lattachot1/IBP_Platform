@@ -27,7 +27,7 @@ export function ObjectiveWeightsPanel({ weights, legacyMultiplier, busy, onChang
     </div>)}</div>)}
     <p className="objective-policy"><SlidersHorizontal size={14} />Score = sum of weight × modeled cost component</p>
     <p className="objective-policy">1× = base importance. 0× ignores that objective term, not its constraints. Weights are relative; they do not need to sum to 100%.</p>
-    <p className="objective-policy">Delivery and safety targets remain soft. High weight is not a zero-shortage guarantee. Prototype OT remains allowed; weight 0 does not prohibit OT.</p>
+    <p className="objective-policy">No overtime. Delivery and safety targets remain soft; high weight is not a zero-shortage guarantee. Holding rates are cost assumptions, separate from these preference weights.</p>
     {legacyMultiplier !== 1 && <p className="objective-warning">Saved legacy shortage multiplier: {legacyMultiplier}×. Effective shortage weight is {weights.shortage * legacyMultiplier}×.</p>}
     {!valid && <p className="objective-warning" role="alert">At least one weight must be greater than zero.</p>}
   </section>;

@@ -1,8 +1,8 @@
 # Adjustable Optimization Priorities
 
-Scenario studio exposes nine dimensionless preference multipliers (0 to 20).
+Scenario studio exposes eight dimensionless preference multipliers (0 to 20).
 The solver minimizes the sum of weighted monetary model components: purchases,
-production, activation, prototype OT, FG holding, RM holding, shortage loss,
+production, activation, FG holding, RM holding, shortage loss,
 safety-stock shortfall and service-target violation. The default is 1 for all.
 Weights do not need to sum to 100%; only their relative values express priorities.
 Zero removes an objective term, not a physical constraint. All-zero is rejected.
@@ -30,15 +30,38 @@ shortfall slack is measured per scenario before risk aggregation, so the model
 objective and reported weighted scores use the same definition.
 
 Service targets and safety stocks remain soft. High weight does not mean a
-hard priority or zero-shortage guarantee. The monthly prototype still allows
-OT; a zero OT weight does not disable it. Daily reactor scheduling rules remain
+hard priority or zero-shortage guarantee. The monthly prototype prohibits
+OT: there is no overtime decision variable or capacity extension. Legacy
+`objective_weights.overtime` is accepted but normalized to 0, and cannot be the
+only positive weight. The classic simulator and its offline fallback also use
+normal capacity only. Historical audit records are retained, not rewritten.
+Daily reactor scheduling rules remain
 outside this monthly model. Shared daily Gantt is not automatically re-optimized
 when priorities change, and billing/raw-price forecasts are not newly connected.
 
-Weights persist in monthly saved snapshots and JSON exports. Inputs changed
+## Configurable Holding Rates
+
+`holding_costs.finished_goods` maps each of the six grades to its USD/t/month
+rate; `holding_costs.raw_material` sets the raw-material rate. Missing entries
+retain the illustrative defaults (FG 13-17, raw material 8). These are monthly
+closing-stock charges, not a daily average-stock cost model. Rates must be
+finite numbers between 0 and 100000; negative and unknown fields are rejected.
+
+The studio provides seven rate inputs, a set-all-to-zero command and a restore
+demo-rates command. Rate 0 removes that charge from both unweighted accounting
+and the weighted objective. Weight 0 only removes its optimization preference:
+the unweighted holding charge remains. Neither action removes physical stock
+balances, storage limits or existing service/safety policies. With both rates
+zero, the model no longer financially distinguishes otherwise equivalent stock
+levels; it does not become a minimum-inventory scheduling model automatically.
+
+Weights and holding rates persist in monthly saved snapshots and JSON exports. Inputs changed
 after solving leave old applied results visible and cannot be saved as new
 results until a successful solve. Scenario-condition presets preserve weights;
 priority presets change preferences but require an explicit Apply priorities.
+Holding-rate edits also require Apply priorities. Snapshots without the current
+no-OT model signature load their inputs and are re-solved rather than restoring
+an obsolete OT plan as current.
 
 ## Before / After and Controlled Experiments
 
@@ -54,7 +77,7 @@ Sensitivity captures the last applied inputs and performs a fresh reference
 solve, followed by sequential one-weight changes. Each API response carries a
 signature of the loaded optimizer source and fixed model data. Requests, model
 signature, horizons and scenario definitions must match except for the chosen
-weight. New inputs cannot leak into an ongoing study. A model mismatch blocks
+weight, including identical holding rates. New inputs cannot leak into an ongoing study. A model mismatch blocks
 adoption; an all-zero candidate is skipped, not silently substituted.
 
 Business tradeoffs compare expected operating expense with unserved volume.
@@ -77,3 +100,6 @@ Run `python -m unittest test_optimization -v` from Backend. Tests cover accounti
 invariance for a fixed plan, actual decision changes, score/solver consistency
 for all three strategies, legacy defaults, partial fields, zero weights and
 rejection of negative, non-finite, unknown or all-zero weights.
+Tests also cover the no-OT capacity ceiling under all strategies, zero versus
+weighted-out holding charges, custom rate accounting, partial rate defaults,
+invalid rates, physical raw-material conservation and HTTP compatibility.

@@ -1,0 +1,59 @@
+.joint-pilot { min-width: 0; color: #294637; }
+.joint-head, .joint-section-title, .joint-status, .joint-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin: 24px 0 18px; }
+.joint-head h2 { font-size: 23px; font-weight: 600; margin-top: 8px; }
+.joint-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.joint-pipeline { display: flex; align-items: center; gap: 17px; flex-wrap: wrap; border-block: 1px solid #d4e1d8; padding: 19px 0; font-size: 12px; color: #3b7662; }
+.joint-toolbar, .joint-input-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 18px; margin: 23px 0; align-items: end; }
+.joint-field { min-width: 0; display: grid; gap: 8px; font-size: 11px; color: #52725f; }
+.joint-field input, .joint-field select { min-width: 0; width: 100%; height: 39px; padding: 7px 9px; border: 1px solid #ccded1; border-radius: 4px; background: white; font-size: 12px; color: #2c5c45; }
+.joint-field input:focus-visible, .joint-field select:focus-visible { outline: 2px solid #27866a; outline-offset: 2px; }
+.joint-forecast-source { border-block: 1px solid #d2e0d7; margin: 24px 0; padding: 5px 0 19px; }
+.joint-source-status { border-left: 3px solid #298467; padding: 10px 14px; background: #e8f1ec; color: #295c46; font-size: 12px; line-height: 1.7; }
+.joint-source-status.modified { border-color: #b07b43; background: #f4eee6; color: #8b6238; }
+.joint-source-status small, .joint-forecast-audit td small { display: block; margin-top: 5px; font-size: 10px; line-height: 1.7; color: #6c8174; }
+.joint-forecast-audit { margin-top: 16px; }
+.joint-forecast-audit summary { font-size: 11px; color: #28694e; cursor: pointer; }
+.joint-forecast-audit ul { list-style: disc; padding-left: 18px; font-size: 11px; line-height: 1.8; color: #6c8174; }
+.joint-toggle { display: flex; align-items: center; gap: 9px; font-size: 11px; min-height: 39px; }
+.joint-toggle input { accent-color: #218668; }
+.joint-note, .joint-footer, .joint-comparison { font-size: 11px; color: #698371; line-height: 1.8; margin: 14px 0; }
+.joint-error { padding: 14px 0; border-block: 1px solid #ddae8a; font-size: 12px; line-height: 1.7; color: #a45a34; }
+.joint-inputs, .joint-audit { border-block: 1px solid #d8e3dc; margin: 22px 0; padding: 16px 0; }
+.joint-inputs summary, .joint-audit summary { font-size: 12px; cursor: pointer; color: #28694e; }
+.joint-status { font-size: 11px; padding: 12px 0; border-bottom: 1px solid #dbe5de; }
+.joint-status span { color: #7a8d7e; }
+.joint-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 25px; margin: 26px 0; }
+.joint-kpis > div { min-width: 0; border-right: 1px solid #d5e1d8; padding-right: 15px; }
+.joint-kpis span, .joint-kpis small { display: block; font-size: 10px; color: #738879; line-height: 1.7; }
+.joint-kpis strong { display: block; font-size: 25px; font-weight: 500; margin: 10px 0; overflow-wrap: anywhere; }
+.joint-kpis > div:nth-child(2) strong { color: #367e9e; }
+.joint-kpis > div:nth-child(3) strong { color: #a47743; }
+.joint-chart { height: 270px; width: 100%; min-width: 0; margin: 20px 0 32px; }
+.joint-section-title h3 { font-size: 16px; font-weight: 600; }
+.joint-gantt-scroll, .joint-table-scroll { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; margin: 18px 0; }
+.joint-gantt-row { display: flex; height: 42px; border-bottom: 1px solid #dce5df; }
+.joint-gantt-row > strong { position: sticky; left: 0; z-index: 1; flex: 0 0 110px; display: flex; align-items: center; padding-left: 8px; background: #f3f7f4; font-size: 11px; font-weight: 500; }
+.joint-gantt-row button { position: relative; flex: 0 0 42px; min-width: 42px; height: 42px; border: 1px solid #dfe7e1; font-size: 10px; font-variant-numeric: tabular-nums; background: #f6f8f6; color: #587261; }
+.joint-gantt-row button small { display: block; font-size: 9px; }
+.joint-gantt-row button[aria-pressed=true] { outline: 2px solid #1d7153; outline-offset: -2px; }
+.joint-gantt-row button.joint-production { color: white; }
+.joint-gantt-row button:hover:not(:disabled) { outline: 2px solid #375d49; outline-offset: -2px; }
+.joint-ghost { position: absolute; bottom: 3px; left: 5px; right: 5px; height: 3px; background: #a6b2aa; border-top: 1px solid white; }
+.joint-flow-row { height: 35px; }
+.joint-flow-row button { height: 35px; font-size: 9px; }
+.joint-day-editor { padding: 6px 0 24px; border-block: 1px solid #d8e4db; }
+.joint-day-editor .joint-toolbar { display: flex; flex-wrap: wrap; align-items: end; gap: 13px; }
+.joint-day-editor .joint-field { flex: 0 1 220px; }
+.joint-day-editor .joint-toolbar > button { min-height: 39px; }
+.joint-table-scroll table { min-width: 620px; width: 100%; border-collapse: collapse; font-size: 11px; }
+.joint-table-scroll th, .joint-table-scroll td { text-align: left; border-bottom: 1px solid #dce5df; padding: 11px 9px; vertical-align: middle; }
+.joint-table-scroll th { font-weight: 500; color: #6c8373; }
+.joint-table-scroll .joint-field span { display: none; }
+.joint-table-scroll input { min-width: 75px; }
+.joint-audit h4 { font-size: 12px; margin: 22px 0 10px; }
+.joint-audit ul { list-style: disc; padding-left: 18px; font-size: 11px; color: #6d8173; line-height: 1.9; }
+.joint-costs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding: 20px 0; }
+.joint-costs span { display: block; font-size: 11px; color: #75887a; }
+.joint-costs strong { display: block; font-size: 15px; font-weight: 500; margin-top: 6px; }
+@media (max-width: 1100px) { .joint-toolbar, .joint-input-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } .joint-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 650px) { .joint-toolbar, .joint-input-grid, .joint-costs { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 15px; } .joint-head h2 { font-size: 20px; } .joint-head .joint-actions { width: 100%; } .joint-pipeline { gap: 10px; font-size: 10px; } .joint-pipeline svg { width: 12px; } .joint-kpis { gap: 18px; } .joint-kpis strong { font-size: 21px; } .joint-chart { height: 230px; } .joint-kpis > div { border: 0; padding: 0; } }

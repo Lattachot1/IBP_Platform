@@ -54,9 +54,12 @@ import {
 import { DemandForecastPanel } from "./DemandForecastPanel";
 import { ModelPerformancePanel } from "./ModelPerformancePanel";
 import { ManualPlanStudio } from "./ManualPlanStudio";
+import PlantScheduler from "./plant/PlantScheduler";
+import { IntegratedPilot } from "./IntegratedPilot";
 import { LogisticsGlobeStudio } from "./LogisticsGlobeStudio";
 import { ExecutiveCockpit } from "./ExecutiveCockpit";
 import { ObjectiveWeightsPanel, ObjectiveScorecard } from "./ObjectiveWeightsPanel";
+import { HoldingCostsPanel } from "./HoldingCostsPanel";
 import { OptimizationBeforeAfter } from "./OptimizationBeforeAfter";
 import { ObjectiveDecisionLab } from "./ObjectiveDecisionLab";
 import { ScenarioProvider } from "./ScenarioContext";
@@ -84,6 +87,8 @@ type View =
   | "forecast"
   | "lab"
   | "timeline"
+  | "factory"
+  | "integrated"
   | "logistics"
   | "network"
   | "models"
@@ -100,6 +105,8 @@ const NAV: { id: View; name: string; icon: LucideIcon; tag?: string }[] = [
   { id: "forecast", name: "Demand intelligence", icon: TrendingUp },
   { id: "lab", name: "Scenario studio", icon: FlaskConical, tag: "3" },
   { id: "timeline", name: "Interactive plan", icon: CalendarRange },
+  { id: "factory", name: "Factory schedule", icon: Factory },
+  { id: "integrated", name: "Integrated pilot", icon: Network, tag: "PILOT" },
   { id: "logistics", name: "Logistics globe", icon: Globe2, tag: "MOCK" },
   { id: "network", name: "Decision map", icon: Network },
   { id: "models", name: "Model observatory", icon: Activity },
@@ -145,7 +152,7 @@ const PROCESS = [
       "Source: billing tonnage, net of returns",
       "Point estimates and empirical prediction intervals",
       "Backtested models and a dedicated forecast endpoint",
-      "Not yet connected to the optimizer demo",
+      "Explicit forecast snapshot load into Integrated pilot; monthly risk demo remains separate",
     ],
   },
   {
@@ -173,7 +180,7 @@ const PROCESS = [
       "Monthly production quantity by grade",
       "Grade activation and minimum production batches",
       "Daily sequence, transition loss and reactor cleaning not modeled yet",
-      "Prototype still permits overtime; company policy: no OT",
+      "No overtime; normal capacity only",
     ],
   },
   {
@@ -572,6 +579,7 @@ function PlanningWorkspaceBody() {
   const dirty =
     !!result && JSON.stringify(normalizeOptimizationRequest(request)) !== JSON.stringify(normalizeOptimizationRequest(result.input));
   const objectiveWeights = { ...DEFAULT_OBJECTIVE_WEIGHTS, ...request.objective_weights };
+  const holdingCosts = normalizeOptimizationRequest(request).holding_costs!;
   const validWeights = Object.values(objectiveWeights).some(weight => weight > 0);
   const chart = useMemo(() => {
     if (!history || !forecast) return [];
@@ -692,6 +700,7 @@ function PlanningWorkspaceBody() {
       strategy: request.strategy,
       objective_weights: { ...DEFAULT_OBJECTIVE_WEIGHTS, ...request.objective_weights },
       shortage_penalty_multiplier: request.shortage_penalty_multiplier,
+      holding_costs: holdingCosts,
       ...(type === "demand"
         ? {
             demand_adjustment_pct: 15,
@@ -889,6 +898,10 @@ function PlanningWorkspaceBody() {
                       ? "Two-month optimizer prototype / same assumptions, three risk strategies."
                       : view === "timeline"
                         ? "Manual schedule / simulated orders / daily stock and delivery impacts."
+                        : view === "factory"
+                          ? "Daily production / grade sequence / reactor maintenance. No OT."
+                        : view === "integrated"
+                          ? "Joint daily production, BD procurement, stock and dispatch / deterministic pilot."
                         : view === "logistics"
                           ? "Shared receipts and fulfilled factory dispatches / mock supply network."
                           : view === "network"
@@ -903,10 +916,10 @@ function PlanningWorkspaceBody() {
                 <span className="tiny-dot" />
                 <div>
                   <small>
-                    {view === "executive" || view === "timeline" || view === "logistics" ? "DAILY MOCK HORIZON" : "OPTIMIZER HORIZON"}
+                    {view === "integrated" ? "JOINT DAILY HORIZON" : view === "factory" ? "FACTORY HORIZON" : view === "executive" || view === "timeline" || view === "logistics" ? "DAILY MOCK HORIZON" : "OPTIMIZER HORIZON"}
                   </small>
                   <strong>
-                    {view === "executive" || view === "timeline" || view === "logistics"
+                    {view === "integrated" ? "7-62 days / mixed sources" : view === "factory" ? "7-120 days / editable" : view === "executive" || view === "timeline" || view === "logistics"
                       ? "Sep-Oct 2026 / +7d tail"
                       : result
                           ? `${period(result.horizon[0])} - ${period(result.horizon[result.horizon.length - 1])}`
@@ -914,7 +927,7 @@ function PlanningWorkspaceBody() {
                   </strong>
                 </div>
               </div>
-              <IconButton
+              {view !== "integrated" && <IconButton
                 icon={RefreshCw}
                 label="Refresh all data"
                 disabled={busy}
@@ -922,7 +935,7 @@ function PlanningWorkspaceBody() {
                   solve(request);
                   setRevision((n) => n + 1);
                 }}
-              />
+              />}
               <IconButton
                 icon={Maximize2}
                 label="Toggle fullscreen"
@@ -936,6 +949,8 @@ function PlanningWorkspaceBody() {
                 }}
               />
               {view !== "timeline" &&
+                view !== "factory" &&
+                view !== "integrated" &&
                 view !== "logistics" &&
                 view !== "executive" && (
                   <button
@@ -959,9 +974,13 @@ function PlanningWorkspaceBody() {
                 ? standalone ? "Standalone executive sandbox: independent mock inputs, not the shared daily draft or an optimization run." : "Daily sandbox: shared with Gantt and logistics. Mock orders, stock and costs; not a monthly optimization run or live telemetry."
                 : view === "timeline"
                   ? "Manual simulation / no OT. Default lag: 3 calendar days (provisional). Factory rule coverage is incomplete."
+                  : view === "integrated"
+                    ? "Joint deterministic pilot: optional billing-trained demand snapshots, shared factory rules, BD purchases and daily stock/dispatch. Other inputs may be illustrative; not a production-approved plan."
+                  : view === "factory"
+                    ? "Daily factory solver / no OT. Demo quantities; stock, materials and delivery feasibility are evaluated separately."
                   : view === "logistics"
                     ? standalone ? "Standalone logistics sandbox: independent mock shipments, not connected to the daily draft." : "Mock inbound arrivals feed the shared daily stock; outbound cargo comes only from fulfilled dispatch. Not live vessel tracking."
-                    : "Optimizer: illustrative inputs. Daily reactor rules and no-OT policy not implemented."}
+                    : "Optimizer: illustrative inputs / no overtime. Detailed reactor rules are enforced in Factory schedule, separately."}
             </span>
             <button onClick={() => setAlerts(true)}>
               Review assumptions
@@ -1380,6 +1399,7 @@ function PlanningWorkspaceBody() {
               </div>
             </>
           )}
+          {view === "lab" && <HoldingCostsPanel rates={holdingCosts} busy={busy} onChange={rates => setRequest(current => ({ ...current, holding_costs: rates }))} />}
           {view === "lab" && <ObjectiveWeightsPanel weights={objectiveWeights} legacyMultiplier={request.shortage_penalty_multiplier} busy={busy} onChange={weights => setRequest(current => ({ ...current, objective_weights: weights }))} onRun={() => solve(request)} onReset={() => setRequest(current => ({ ...current, shortage_penalty_multiplier: 1, objective_weights: { ...DEFAULT_OBJECTIVE_WEIGHTS } }))} />}
           {view === "lab" && <OptimizationBeforeAfter reference={comparisonReference} current={result} pinned={pinned} dirty={dirty} onTogglePin={() => { referencePinned.current = !referencePinned.current; setPinned(referencePinned.current); }} onUseCurrent={() => { if (appliedResult.current) { setComparisonReference(appliedResult.current); referencePinned.current = true; setPinned(true); } }} />}
           <ObjectiveDecisionLab active={view === "lab"} applied={result} currentInput={request} dirty={dirty} busy={busy} onApply={data => { runId.current++; setBusy(false); acceptResult(data); setRequest(normalizeOptimizationRequest(data.input)); setError(""); notify("Tested plan and its frozen preferences applied. No daily re-scheduling performed."); }} />
@@ -1708,7 +1728,6 @@ function PlanningWorkspaceBody() {
                         <th>Production</th>
                         <th>RM purchase</th>
                         <th>RM ending stock</th>
-                        <th>Prototype OT</th>
                         <th>Utilization</th>
                       </tr>
                     </thead>
@@ -1720,9 +1739,6 @@ function PlanningWorkspaceBody() {
                           <td>{nf(m.planned_production_tons)} t</td>
                           <td>{nf(m.raw_material_purchase_tons)} t</td>
                           <td>{nf(m.ending_raw_inventory_tons)} t</td>
-                          <td className={m.overtime_tons ? "warning-text" : ""}>
-                            {nf(m.overtime_tons)} t
-                          </td>
                           <td>{nf(m.capacity_utilization_pct, 1)}%</td>
                         </tr>
                       ))}
@@ -1932,8 +1948,8 @@ function PlanningWorkspaceBody() {
                       },
                       {
                         label: "No-OT company policy",
-                        value: "Not implemented",
-                        okay: false,
+                        value: "Enforced",
+                        okay: true,
                       },
                       {
                         label: "ERP / factory execution",
@@ -2044,12 +2060,18 @@ function PlanningWorkspaceBody() {
                       <button
                         className="button"
                         onClick={() => {
+                          const next = normalizeOptimizationRequest(run.result.input);
+                          setRequest(next);
+                          navigate("lab");
+                          if (run.result.overtime_allowed !== false || !result?.model_signature || run.result.model_signature !== result.model_signature) {
+                            notify("Saved inputs loaded. Recalculating under the current no-overtime model.");
+                            void solve(next);
+                            return;
+                          }
                           runId.current++;
                           setBusy(false);
                           acceptResult(run.result);
-                          setRequest(run.result.input);
                           setError("");
-                          navigate("lab");
                           notify(
                             "Saved result restored. No new solver run performed.",
                           );
@@ -2086,6 +2108,8 @@ function PlanningWorkspaceBody() {
               )}
             </section>
           )}
+          <PlantScheduler source={result} active={view === "factory"} onOpenShared={() => navigate("timeline")} />
+          <IntegratedPilot source={result} active={view === "integrated"} />
           <ManualPlanStudio source={null} active={view === "timeline"} />
           <ConnectedLogistics active={view === "logistics" && !standalone} />
           <ConnectedCockpit active={view === "executive" && !standalone} navigate={navigate} />
@@ -2224,8 +2248,8 @@ function PlanningWorkspaceBody() {
                   <strong>Optimizer assumptions</strong>
                   <p>
                     Monthly prototype. Costs, BOM, capacity and stock targets
-                    are illustrative. OT is still in the model despite company
-                    no-OT policy.
+                    are illustrative. Overtime is prohibited. Holding rates are
+                    configurable cost assumptions and can be set to zero.
                   </p>
                 </div>
                 <div className="notice">
