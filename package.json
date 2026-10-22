@@ -1,0 +1,14 @@
+{
+  "name": "ube-ibp-platform",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "setup": "node scripts/frontend.mjs setup",
+    "dev": "node scripts/frontend.mjs dev",
+    "build": "node scripts/frontend.mjs build",
+    "check": "node scripts/frontend.mjs check"
+  },
+  "engines": {
+    "node": "^22.0.0 || ^24.0.0"
+  }
+}

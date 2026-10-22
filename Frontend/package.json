@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "check": "tsc --noEmit --incremental false",
     "start": "next start",
     "lint": "next lint"
   },

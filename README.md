@@ -6,6 +6,54 @@
 
 ---
 
+## Start This Branch On Another Computer
+
+Install [Node.js 22 or 24 LTS](https://nodejs.org/en/about/previous-releases)
+(including npm) first. Stop any existing frontend process with Ctrl+C before
+installing or rebuilding dependencies.
+
+From the repository root:
+
+```powershell
+git switch feature/integrated-pilot-solver-benchmark-20261022
+git pull --ff-only
+npm run dev
+```
+
+The root launcher installs frontend dependencies before starting Next.js.
+It includes `three`, `@types/three`, and the development tools; no manual
+`npm install three` or copied `node_modules` directory is needed. Open the URL
+printed by Next.js (normally `http://localhost:3000`). If PowerShell blocks
+`npm.ps1`, use `npm.cmd run dev` instead; no execution-policy change is needed.
+
+The frontend lockfile is committed. To perform a clean installation with its
+exact versions, run `npm run setup` from the root. This replaces
+`Frontend/node_modules`, so stop the frontend before using it. You can also
+run `npm ci --include=dev` inside `Frontend` directly.
+
+Other root commands:
+
+```powershell
+npm run check
+npm run build
+```
+
+The frontend Docker build also uses the committed lockfile and Node.js 24 LTS.
+Installation behavior follows the [npm ci documentation](https://docs.npmjs.com/cli/v11/commands/npm-ci/).
+
+This installs and starts the frontend only. Solving integrated/factory plans
+also requires the Python backend (`Backend/requirements.txt`, Python 3.12).
+Private billing data and `.env` are not included. Missing billing data disables
+the real demand forecast, not compilation of the 3D frontend.
+
+Security note: the existing dependency set currently reports critical/high
+advisories in `npm audit`. This installation fix does not upgrade framework
+major versions. Use this branch as a local prototype; resolve those advisories
+before a production or company-data deployment. Do not apply `npm audit fix
+--force` without reviewing the required framework/CSS migrations.
+
+---
+
 ## Ideal Optimization Prototype
 
 The `feature/ideal-optimization-prototype` branch adds a discussion-ready
