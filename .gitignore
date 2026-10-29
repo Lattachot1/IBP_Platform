@@ -1,7 +1,6 @@
 # Dependencies
 node_modules/
 */node_modules/
-package-lock.json
 
 # Next.js Build Outputs
 .next/
@@ -9,6 +8,7 @@ package-lock.json
 out/
 build/
 dist/
+*.tsbuildinfo
 
 # Python Cache & Virtual Environments
 __pycache__/
@@ -16,6 +16,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.pytest_cache/
 .env
 .venv
 env/

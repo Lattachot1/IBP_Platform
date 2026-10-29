@@ -173,13 +173,18 @@ def evaluate_roundtrip(label, res, req):
 def evaluate_broken(label, draft, req):
     """A deliberately broken edit must be flagged: shorten a campaign below
     its min-run and drop every cleaning window."""
+    min_runs = {g: spec["min_run_days"] for g, spec in _load_config()["grades"].items()}
     camps = [dict(c) for c in draft["campaigns"]]
-    victim = next((i for i, c in enumerate(camps[1:-1], start=1) if c["days"] >= 2), None)
+    # Cutting just one day only breaks a campaign that sits exactly at its
+    # min-run, so cut it to min-run - 1 (long campaigns gave false FAILs).
+    victim = next((i for i, c in enumerate(camps[1:-1], start=1)
+                   if 2 <= min_runs[c["grade"]] <= c["days"]), None)
     if victim is None:
         print("  (skip broken-plan check: no interior campaign to shorten)")
         return
-    camps[victim]["days"] -= 1
-    camps[victim + 1]["days"] += 1
+    cut = camps[victim]["days"] - (min_runs[camps[victim]["grade"]] - 1)
+    camps[victim]["days"] -= cut
+    camps[victim + 1]["days"] += cut
     ev = manual.evaluate({**req.model_dump(), "campaigns": camps, "cleanings": [], "pair_plan": draft["pair_plan"]})
     print("  broken plan -> %s (%d conflicts)" % (ev["kpis"]["status"], ev["conflicts"]))
     check("%s evaluator flags broken plan" % label, ev["conflicts"] >= 1)
@@ -202,13 +207,21 @@ def scenario(label, **kwargs):
     return res
 
 
+# Shared with tests/test_optimization.py (pytest runs the same scenarios)
+SCENARIOS = {
+    "S1 default 28d": dict(horizon_days=28),
+    "S2 heavy VCR-412 demand": dict(horizon_days=28, demand={"VCR412": 4000}),
+    "S3 horizon 14d": dict(horizon_days=14),
+    "S4 heavy BR150L demand": dict(horizon_days=28, demand={"BR150L": 6000}),
+}
+
+
 if __name__ == "__main__":
     print("Running engine self-test...")
 
-    s1 = scenario("S1 default 28d", horizon_days=28)
-    s2 = scenario("S2 heavy VCR-412 demand", horizon_days=28, demand={"VCR412": 4000})
-    s3 = scenario("S3 horizon 14d", horizon_days=14)
-    s4 = scenario("S4 heavy BR150L demand", horizon_days=28, demand={"BR150L": 6000})
+    results = {label: scenario(label, **kwargs) for label, kwargs in SCENARIOS.items()}
+    s1 = results["S1 default 28d"]
+    s2 = results["S2 heavy VCR-412 demand"]
 
     if s1.get("days") and s2.get("days"):
         m1 = [d["parts"][-1]["grade"] for d in s1["days"]]

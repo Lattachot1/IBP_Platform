@@ -407,7 +407,7 @@ export default function IBPPlatformDashboard() {
                 <p className="text-xs sm:text-sm text-slate-300 mt-0.5 flex items-center gap-2">
                   <span className="text-blue-400 font-semibold">UBE Chemicals (Asia) PCL</span>
                   <span className="text-slate-500">•</span>
-                  <span>"One Platform · One Data · One Plan"</span>
+                  <span>&quot;One Platform · One Data · One Plan&quot;</span>
                   <span className="text-slate-500">•</span>
                   <span className="text-amber-400 font-medium">Topic 45 | Team CALTLAPSE</span>
                 </p>
@@ -978,7 +978,7 @@ export default function IBPPlatformDashboard() {
                 {history.length === 0 ? (
                   <tr>
                     <td colSpan={10} className="py-8 text-center text-slate-400">
-                      No saved scenarios found. Run a simulation and click "Save Scenario".
+                      No saved scenarios found. Run a simulation and click &quot;Save Scenario&quot;.
                     </td>
                   </tr>
                 ) : (
