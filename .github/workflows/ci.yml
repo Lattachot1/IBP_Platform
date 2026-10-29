@@ -1,0 +1,52 @@
+# CI: every pull request and every push to main runs lint, type check,
+# tests and a production build. Real client data (DemandModel/) is never
+# in git, so the backend tests run without it (forecast engine unavailable).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same branch cancels the run still in progress
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (lint, types, tests, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: Frontend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20   # same as Frontend/Dockerfile
+          cache: npm
+          cache-dependency-path: Frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  backend:
+    name: Backend (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: Backend
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'   # same as Backend/Dockerfile
+          cache: pip
+          cache-dependency-path: Backend/requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest
