@@ -10,6 +10,9 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
+from planning_data import engine_forecast
+from planning_data.sql import StoreUnavailable, WriteRejected
+
 log = logging.getLogger("ibp.api.forecast")
 
 router = APIRouter(tags=["forecast"])
@@ -35,6 +38,9 @@ def train_at_startup() -> None:
     except Exception as exc:
         forecast_engine = None
         log.warning("[Forecast WARNING] Engine training skipped: %s", exc)
+        return
+    # the planner reads the monthly forecast from dbo.DemandForecasts
+    engine_forecast.publish_after_training(forecast_engine)
 
 
 def _require_engine() -> dict:
@@ -174,6 +180,7 @@ def handle_retrain():
             status_code=503,
             detail="Retrain failed, previous engine kept: %s" % exc,
         )
+    engine_forecast.publish_after_training(forecast_engine)
     return {
         "status": "retrained",
         "trained_at": forecast_engine["trained_at"],
@@ -181,4 +188,24 @@ def handle_retrain():
             name: {"champion": info["champion"], "wape": round(info["wape"], 4)}
             for name, info in forecast_engine["grades"].items()
         },
+        "published": engine_forecast.last_publish(),
     }
+
+
+@router.post("/api/v1/forecasts/from-engine")
+def handle_publish_engine_forecast(dry_run: bool = False):
+    """Write the engine's monthly forecast per product group into the planning
+    data (Source = 'engine'; a planner's 'manual' row still overrides it).
+
+    Runs on its own after every training when a database is configured;
+    this endpoint does it on demand, in memory mode too. dry_run=true
+    counts the rows without keeping them.
+    """
+    engine = _require_engine()
+    try:
+        return engine_forecast.publish(engine, dry_run=dry_run)
+    except WriteRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except StoreUnavailable:
+        log.exception("[Database] Planning data: engine forecast NOT published")
+        raise HTTPException(status_code=503, detail="Database unavailable: engine forecast NOT published")

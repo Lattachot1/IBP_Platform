@@ -7,6 +7,7 @@ import { getJson, patchJson, postJson, postRaw } from '@/lib/apiClient';
 import { ApiError } from '@/lib/apiError';
 
 import type {
+  EngineForecastReport,
   Forecast,
   ImportKind,
   ImportReport,
@@ -76,3 +77,7 @@ export const getStock = () => getJson<StockSnapshot>('/api/v1/stock');
 export const getQcLots = () => getJson<QcLot[]>('/api/v1/qc-lots');
 export const getSalesOrders = () => getJson<SalesOrder[]>('/api/v1/sales-orders');
 export const getForecasts = () => getJson<Forecast[]>('/api/v1/forecasts');
+
+/** Write the forecast engine's monthly forecast per group as 'engine' rows. */
+export const publishEngineForecast = () =>
+  postJson<EngineForecastReport>('/api/v1/forecasts/from-engine', {});

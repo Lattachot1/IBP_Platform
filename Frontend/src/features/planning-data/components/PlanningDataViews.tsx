@@ -1,8 +1,10 @@
 import { useState } from 'react';
-import { RefreshCw, Table2 } from 'lucide-react';
+import { RefreshCw, Sparkles, Table2 } from 'lucide-react';
 
+import { describeFailure } from '@/lib/apiClient';
 import { formatNumber } from '@/lib/format';
 
+import { publishEngineForecast } from '../api';
 import type { Product, SalesOrder } from '../types';
 import type { PlanningViewsState } from '../usePlanningData';
 
@@ -46,6 +48,25 @@ function Status({ value }: { value: string }) {
 export function PlanningDataViews({ views, products }: { views: PlanningViewsState; products: Product[] }) {
   const [tab, setTab] = useState<Tab>('stock');
   const [orderFilter, setOrderFilter] = useState<OrderFilter>('open');
+  const [publishing, setPublishing] = useState(false);
+  const [engineNote, setEngineNote] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const updateFromEngine = async () => {
+    setPublishing(true);
+    try {
+      const r = await publishEngineForecast();
+      setEngineNote({
+        ok: true,
+        text: `${r.rows} engine rows for ${r.groups.join(', ')} (${r.first_month} to ${r.last_month}) · ${r.inserted} new, ${r.updated} updated`
+          + (r.skipped_grades.length ? ` · not a plant group: ${r.skipped_grades.join(', ')}` : ''),
+      });
+      await views.refresh();
+    } catch (err) {
+      setEngineNote({ ok: false, text: describeFailure(err) });
+    } finally {
+      setPublishing(false);
+    }
+  };
   const product = new Map(products.map((p) => [p.material_no, p]));
   const orders = views.orders.filter((o) => orderFilter === 'all' || o.status === orderFilter);
   const stockRows = views.stock?.rows ?? [];
@@ -155,6 +176,19 @@ export function PlanningDataViews({ views, products }: { views: PlanningViewsSta
           </Table>
         </>
       ) : (
+        <>
+        <div className="px-6 pt-3 text-xs flex flex-wrap items-center gap-2 text-slate-600">
+          <button onClick={() => void updateFromEngine()} disabled={publishing}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg font-semibold text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50">
+            <Sparkles className="w-3.5 h-3.5" /> {publishing ? 'Updating…' : 'Update from forecast engine'}
+          </button>
+          <span className="text-slate-400">Writes the AI forecast per group and month as engine rows; manual rows keep overriding them</span>
+          {engineNote && (
+            <p role={engineNote.ok ? 'status' : 'alert'} className={`w-full ${engineNote.ok ? 'text-emerald-700' : 'text-rose-600'}`}>
+              {engineNote.ok ? engineNote.text : `Could not update from the forecast engine: ${engineNote.text}`}
+            </p>
+          )}
+        </div>
         <Table empty="No forecast rows" head={
           <tr><th className={th}>Group</th><th className={th}>Month</th><th className={th}>Source</th><th className={`${th} text-right`}>Tons</th><th className={th}>Updated by</th></tr>
         }>
@@ -168,6 +202,7 @@ export function PlanningDataViews({ views, products }: { views: PlanningViewsSta
             </tr>
           ))}
         </Table>
+        </>
       )}
     </section>
   );
