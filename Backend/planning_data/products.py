@@ -14,7 +14,6 @@ Store selection follows the scenario store:
 
 import csv
 import threading
-from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
@@ -23,6 +22,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 import database
 from optimization.engine import plant_groups
+from planning_data.sql import (  # noqa: F401 - StoreUnavailable is re-exported
+    DUPLICATE_KEY_ERRORS,
+    StoreUnavailable,
+    connection,
+    error_number,
+    utc,
+)
 
 MOCK_PRODUCTS = Path(__file__).resolve().parents[1] / "sample_data" / "mock" / "products.csv"
 DEFAULT_EDITOR = "Planner (Interactive)"
@@ -48,10 +54,6 @@ class ProductExists(ValueError):
 
 
 class UnknownGroup(ValueError):
-    pass
-
-
-class StoreUnavailable(RuntimeError):
     pass
 
 
@@ -191,36 +193,20 @@ _INSERT_SQL = (
     "INSERT INTO dbo.Products (MaterialNo, Description, GroupCode, MinStockTons, IsActive, UpdatedBy) "
     "OUTPUT %s VALUES (%%s, %%s, %%s, %%s, %%s, %%s);" % _OUTPUT
 )
-_DUPLICATE_KEY_ERRORS = (2601, 2627)
 
 
-@contextmanager
 def _connection():
-    try:
-        conn = database.open_connection()
-    except Exception as exc:
-        raise StoreUnavailable("database unreachable: %s" % exc) from exc
-    try:
-        yield conn
-    except (ProductNotFound, ProductExists):
-        raise
-    except Exception as exc:
-        raise StoreUnavailable("database error: %s" % exc) from exc
-    finally:
-        conn.close()
+    return connection(passthrough=(ProductNotFound, ProductExists))
 
 
 def _from_row(row: dict) -> Product:
-    updated_at = row["UpdatedAt"]
-    if updated_at is not None and updated_at.tzinfo is None:
-        updated_at = updated_at.replace(tzinfo=timezone.utc)   # DATETIME2 holds SYSUTCDATETIME()
     return Product(
         material_no=row["MaterialNo"],
         description=row["Description"],
         group_code=row["GroupCode"],
         min_stock_tons=float(row["MinStockTons"]),
         is_active=bool(row["IsActive"]),
-        updated_at=updated_at,
+        updated_at=utc(row["UpdatedAt"]),
         updated_by=row["UpdatedBy"],
     )
 
@@ -250,7 +236,7 @@ class SqlProductStore:
                     round(new.min_stock_tons, 3), 1 if new.is_active else 0, new.updated_by,
                 ))
             except Exception as exc:
-                if exc.args and exc.args[0] in _DUPLICATE_KEY_ERRORS:
+                if error_number(exc) in DUPLICATE_KEY_ERRORS:
                     raise ProductExists(new.material_no) from exc
                 raise
             row = cursor.fetchone()

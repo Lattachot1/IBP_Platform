@@ -38,9 +38,10 @@ IBP_Platform/
 │   │   ├── scenarios.py           # /api/simulate, /api/scenarios (+ /save)
 │   │   ├── forecast.py            # /api/v1/models, history, forecast, retrain (+ engine state)
 │   │   ├── optimize.py            # /api/v1/optimize (+ /evaluate, /catalog)
-│   │   └── products.py            # /api/v1/products (product master: list, create, edit, deactivate)
+│   │   ├── products.py            # /api/v1/products (product master: list, create, edit, deactivate)
+│   │   └── planning.py            # /api/v1/imports/* (CSV) + อ่าน stock, qc-lots, sales-orders, forecasts
 │   ├── simulation.py              # กฎ What-if (capacity/OT/revenue), Scenario models, in-memory store
-│   ├── planning_data/             # ข้อมูลวางแผนระดับ product: products.py (store DB/in-memory), seed.py (โหลดสินค้าเข้า DB)
+│   ├── planning_data/             # ข้อมูลวางแผนระดับ product: products.py, imports.py (อ่าน CSV + รายงานแถวที่ผิด), store.py (DB/in-memory), seed.py
 │   ├── sample_data/               # ข้อมูลสมมติ (mock) รูปแบบเดียวกับ export จาก SAP — ไม่ใช่ข้อมูลลูกค้า
 │   ├── database.py                # MS SQL Access Layer (pymssql) — DB ล่มตอบ 503 ไม่แอบเก็บใน RAM
 │   ├── forecasting/               # Demand forecasting engine (data, models, backtest, service)
@@ -160,6 +161,15 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
 - Self-test ของ optimizer: `cd Backend && python -m optimization.selftest` (ตรวจคำตอบ solver กับกฎทุกข้อ และตรวจว่า evaluator รับแผนของ solver โดยไม่มี conflict)
 - `GET /api/v1/optimize/catalog` — product group จาก `plant_config.yaml` พร้อมสินค้าที่ active ในแต่ละ group (สินค้าที่ group ถูกลบไปแล้วอยู่ใน `unassigned`)
 - `GET /api/v1/products` (`?active=true|false`), `GET /api/v1/products/{material_no}`, `POST /api/v1/products`, `PATCH /api/v1/products/{material_no}` — ข้อมูลหลักสินค้า (SAP material) แต่ละตัวอยู่ใน group ของ `plant_config.yaml` และมีสต็อกขั้นต่ำ ไม่มีการลบ: เลิกขายใช้ `PATCH {"is_active": false}` ถ้าไม่ได้ตั้งค่า DB จะใช้สินค้าสมมติจาก `Backend/sample_data/mock/products.csv` (ยังไม่มี login: ใครเข้าถึง backend ได้ก็แก้ได้)
+- `POST /api/v1/imports/{stock|qc-lots|sales-orders|forecasts}` — import ไฟล์ CSV (ส่งไฟล์เป็น body, `Content-Type: text/csv`) รูปแบบตาม `Backend/sample_data/README.md`:
+  - ทั้งไฟล์หรือไม่เลย: ผิดแม้แถวเดียวตอบ 422 พร้อมรายงานบรรทัดและคอลัมน์ที่ผิด ไม่บันทึกอะไร
+  - `?dry_run=true` ตรวจและนับว่าจะเพิ่ม/อัปเดตกี่แถวโดยไม่บันทึก
+  - stock แทนที่ทั้ง snapshot ของวันนั้น (วันที่จากคอลัมน์ `Stock Date` หรือ `?stock_date=`) ส่วน qc-lots, sales-orders, forecasts อัปเดตทับตาม key แถวที่ไม่อยู่ในไฟล์คงเดิม
+  - material ต้องมีใน product master ก่อน
+  ```bash
+  curl -X POST "http://localhost:8080/api/v1/imports/sales-orders?dry_run=true" -H "Content-Type: text/csv" --data-binary @Backend/sample_data/mock/sap_sales_orders.csv
+  ```
+- `GET /api/v1/stock` (`?on=` snapshot ล่าสุดไม่เกินวันนั้น), `GET /api/v1/qc-lots` (`?status=`), `GET /api/v1/sales-orders` (`?status=&due_from=&due_to=`, มี `open_tons`), `GET /api/v1/forecasts` (`?month_from=&month_to=`) — ถ้าไม่ได้ตั้งค่า DB จะเริ่มด้วยข้อมูลสมมติจาก `Backend/sample_data/mock/`
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด
 - `GET /api/health` — ตรวจสอบสถานะ Backend และ Database
