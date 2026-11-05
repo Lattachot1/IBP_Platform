@@ -28,6 +28,8 @@ DATE_COL = "Billing Date"
 QTY_COL = "QTY(ton)"
 TYPE_COL = "Billing Type"
 LEVEL_COL = "Grade"
+MATERIAL_COL = "Material Number"
+DESCRIPTION_COL = "Mat Description"
 EXCLUDED_TYPES = {"ZV01", "ZV02"}
 
 # Grades with complete history (89 months after dropping the in-progress
@@ -73,7 +75,9 @@ def load_billing_frame(path=None) -> pd.DataFrame:
     """Load and clean the billing extract into a frame keyed by Grade x month."""
     source = find_source_file(path)
     # cp874 = Thai Excel ANSI; row 0 is a human note row, header is row 1
-    df = pd.read_csv(source, header=1, encoding="cp874", low_memory=False)
+    # Material numbers are codes, not numbers: read as text so a leading
+    # zero would survive
+    df = pd.read_csv(source, header=1, encoding="cp874", low_memory=False, dtype={MATERIAL_COL: str})
     df.columns = [c.strip() for c in df.columns]
 
     df["_date"] = pd.to_datetime(df[DATE_COL], format="%Y/%m/%d", errors="coerce")

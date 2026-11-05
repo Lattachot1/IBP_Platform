@@ -27,7 +27,8 @@ IBP_Platform/
 ├── .github/workflows/ci.yml       # CI: lint, type check, tests, build, docker build ทุก PR
 ├── init-db/
 │   ├── 01-init.sql                # T-SQL Script สร้าง Database IBP_DB, Scenarios Table และ Seed Data
-│   └── 02-app-login.sql           # Login ibp_app (อ่าน/เขียน IBP_DB เท่านั้น) ที่ backend ใช้
+│   ├── 02-app-login.sql           # Login ibp_app (อ่าน/เขียน IBP_DB เท่านั้น) ที่ backend ใช้
+│   └── 03-planning.sql            # ตารางวางแผนระดับ product: Products, StockSnapshots, QcLots, SalesOrders, DemandForecasts
 ├── Backend/                       # Unified Python Backend (FastAPI)
 │   ├── Dockerfile                 # Python 3.12-slim container image
 │   ├── requirements.txt           # runtime dependencies (requirements-dev.txt = + pytest)
@@ -36,12 +37,15 @@ IBP_Platform/
 │   │   ├── health.py              # GET /api/health
 │   │   ├── scenarios.py           # /api/simulate, /api/scenarios (+ /save)
 │   │   ├── forecast.py            # /api/v1/models, history, forecast, retrain (+ engine state)
-│   │   └── optimize.py            # /api/v1/optimize (+ /evaluate)
+│   │   ├── optimize.py            # /api/v1/optimize (+ /evaluate, /catalog)
+│   │   └── products.py            # /api/v1/products (product master: list, create, edit, deactivate)
 │   ├── simulation.py              # กฎ What-if (capacity/OT/revenue), Scenario models, in-memory store
+│   ├── planning_data/             # ข้อมูลวางแผนระดับ product: products.py (store DB/in-memory), seed.py (โหลดสินค้าเข้า DB)
+│   ├── sample_data/               # ข้อมูลสมมติ (mock) รูปแบบเดียวกับ export จาก SAP — ไม่ใช่ข้อมูลลูกค้า
 │   ├── database.py                # MS SQL Access Layer (pymssql) — DB ล่มตอบ 503 ไม่แอบเก็บใน RAM
 │   ├── forecasting/               # Demand forecasting engine (data, models, backtest, service)
 │   ├── optimization/              # Production Schedule Optimizer: engine.py (CP-SAT) + manual.py (rule check for hand-edited plans) + plant_config.yaml
-│   └── tests/                     # pytest (API, database mode, forecast state, optimizer selftest)
+│   └── tests/                     # pytest (API, database mode, forecast state, optimizer selftest, products)
 └── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
     ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React, Vitest
@@ -116,6 +120,11 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
 - **MS SQL Server 2022:** `127.0.0.1:1433` (เปิดเฉพาะเครื่องนี้), Database: `IBP_DB`
   - `db-init` สร้าง schema + seed (`init-db/01-init.sql`) และ login `ibp_app` ที่ backend ใช้ (อ่าน/เขียน `IBP_DB` เท่านั้น — `init-db/02-app-login.sql`)
   - รหัสผ่านของ `sa` และ `ibp_app` อยู่ใน `.env`
+  - `init-db/03-planning.sql` สร้างตารางวางแผนระดับ product (รันซ้ำได้ ฐานข้อมูลเดิมจะได้ตารางใหม่ตอน `docker compose up` ครั้งถัดไป) ตารางสินค้าเริ่มต้นว่าง โหลดสินค้าจากข้อมูล billing ด้วย:
+    ```bash
+    docker compose exec backend python -m planning_data.seed --source billing
+    ```
+    (`--dry-run` ดูจำนวนก่อน, `--source mock` ใช้สินค้าสมมติ) สคริปต์เพิ่มเฉพาะสินค้าที่ยังไม่มี ไม่ทับค่าที่ planner แก้ไว้
 
 > ถ้าเครื่องอื่นจะเปิด dashboard ให้ตั้ง `NEXT_PUBLIC_API_URL` ใน `.env` เป็นที่อยู่ของเครื่อง server แล้ว build ใหม่ (`docker compose up -d --build`) เพราะค่านี้ถูกฝังใน frontend ตอน build
 
@@ -149,6 +158,8 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
 - `POST /api/v1/optimize/evaluate` — ตรวจแผนที่แก้ด้วยมือ (campaign/cleaning/pair plan) กับกฎเดียวกันใน `plant_config.yaml` ตอบรูปแบบเดียวกับ solver พร้อม `checks` ระดับ `conflict` และเลขวันที่ผิดกฎ (`Backend/optimization/manual.py`)
 - หน้า `/optimize` — Production Optimization (Gantt แผนผลิตรายวัน, วงจร Reactor, Fulfillment, Constraint check) มี Quick scenarios, วันเริ่มแผน/วันหยุดบริษัท, และโหมด **Edit plan**: ลากยืด/หด campaign, ย้ายช่วงล้างเตา, สลับ/แทรก/ลบ campaign โดยแผนที่ optimize แสดงเป็น ghost และ backend ตรวจกฎทุกครั้ง (วันที่ผิดกฎขึ้นสีแดง) มี fallback ข้อมูลในเครื่องเมื่อ backend ไม่รัน
 - Self-test ของ optimizer: `cd Backend && python -m optimization.selftest` (ตรวจคำตอบ solver กับกฎทุกข้อ และตรวจว่า evaluator รับแผนของ solver โดยไม่มี conflict)
+- `GET /api/v1/optimize/catalog` — product group จาก `plant_config.yaml` พร้อมสินค้าที่ active ในแต่ละ group (สินค้าที่ group ถูกลบไปแล้วอยู่ใน `unassigned`)
+- `GET /api/v1/products` (`?active=true|false`), `GET /api/v1/products/{material_no}`, `POST /api/v1/products`, `PATCH /api/v1/products/{material_no}` — ข้อมูลหลักสินค้า (SAP material) แต่ละตัวอยู่ใน group ของ `plant_config.yaml` และมีสต็อกขั้นต่ำ ไม่มีการลบ: เลิกขายใช้ `PATCH {"is_active": false}` ถ้าไม่ได้ตั้งค่า DB จะใช้สินค้าสมมติจาก `Backend/sample_data/mock/products.csv` (ยังไม่มี login: ใครเข้าถึง backend ได้ก็แก้ได้)
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด
 - `GET /api/health` — ตรวจสอบสถานะ Backend และ Database

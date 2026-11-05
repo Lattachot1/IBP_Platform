@@ -22,7 +22,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 import database
-from api import forecast, health, optimize, scenarios
+from api import forecast, health, optimize, products, scenarios
 
 logging.basicConfig(
     level=logging.INFO,
@@ -87,6 +87,7 @@ app.include_router(health.router)
 app.include_router(scenarios.router)
 app.include_router(forecast.router)
 app.include_router(optimize.router)
+app.include_router(products.router)
 
 
 if __name__ == "__main__":

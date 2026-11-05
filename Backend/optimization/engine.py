@@ -88,6 +88,15 @@ def _grades_payload(cfg: dict) -> list:
     return [{"id": g, "disp": _display(g), "slot": i + 1} for i, g in enumerate(order)]
 
 
+def plant_groups() -> list:
+    """The product groups of plant_config.yaml in display order: [{id, disp, slot}].
+
+    Read on every call, like the solver's rules, so a group added to the
+    file is usable straight away.
+    """
+    return _grades_payload(_load_config())
+
+
 def _empty_payload(status: str, message: str, cfg: dict, solve_s: float, horizon: int, start_date: str) -> dict:
     grades = _grades_payload(cfg)
     return {
