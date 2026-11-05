@@ -234,3 +234,10 @@ def test_optimize_with_planning_data_needs_the_database(monkeypatch):
     monkeypatch.setattr(database, "open_connection", down)
     res = client.post("/api/v1/optimize", json={"use_planning_data": True, "horizon_days": 7})
     assert res.status_code == 503
+
+
+def test_every_assumption_in_plant_config_is_plain_text():
+    # an unquoted "key: value" inside a list item becomes a mapping in YAML
+    # and crashed the /optimize page's assumptions panel
+    assumptions = engine._load_config()["assumptions"]
+    assert assumptions and all(isinstance(a, str) for a in assumptions), assumptions

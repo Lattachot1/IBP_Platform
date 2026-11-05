@@ -62,4 +62,4 @@ assumptions:
   - The final campaign may run past the horizon — min-run is waived at the boundary
   - Products of one group share a day's output freely (same recipe; assumption, pending)
   - Forecast not yet ordered must be produced by the month end, not yet QC-released (assumption, pending)
-  - Late orders weigh per ton-day, all products equally (client: equal priority)
+  - Late orders weigh per ton-day and every product counts the same (client confirmed equal priority)
