@@ -54,6 +54,20 @@ export function postJson<T>(path: string, body: unknown, options: CallOptions = 
   );
 }
 
+/** PATCH a JSON body (only the fields to change); same errors as getJson. */
+export function patchJson<T>(path: string, body: unknown, options: CallOptions = {}): Promise<T> {
+  return call<T>(
+    path,
+    { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    options,
+  );
+}
+
+/** POST a raw body (e.g. an uploaded CSV file, sent byte for byte); same errors as getJson. */
+export function postRaw<T>(path: string, body: Blob | string, contentType: string, options: CallOptions = {}): Promise<T> {
+  return call<T>(path, { method: 'POST', headers: { 'Content-Type': contentType }, body }, options);
+}
+
 /** True when the backend answered (even with an error status). */
 export function backendAnswered(err: unknown): boolean {
   return err instanceof ApiError;

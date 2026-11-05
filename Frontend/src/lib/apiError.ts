@@ -8,11 +8,15 @@
 /** The backend was reached but answered with a non-2xx status. */
 export class ApiError extends Error {
   readonly status: number;
+  /** The parsed JSON error body (null when there was none), for callers
+   *  that need more than the message, e.g. an import's row report. */
+  readonly body: unknown;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, body: unknown = null) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
+    this.body = body;
     // keep `instanceof ApiError` working when compiled down to ES5
     Object.setPrototypeOf(this, ApiError.prototype);
   }
@@ -48,5 +52,5 @@ export async function readJson<T>(res: Response): Promise<T> {
   } catch {
     // not JSON (empty body, proxy error page)
   }
-  throw new ApiError(res.status, formatApiDetail(body, res.status));
+  throw new ApiError(res.status, formatApiDetail(body, res.status), body);
 }
