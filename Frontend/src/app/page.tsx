@@ -23,43 +23,10 @@ import {
   Sparkles,
   Info
 } from 'lucide-react';
-import { DemandForecastPanel } from '../components/DemandForecastPanel';
-import { ModelPerformancePanel } from '../components/ModelPerformancePanel';
-import { ApiError, readJson } from '../lib/apiError';
-
-// Data Interfaces
-interface ScenarioResult {
-  scenario_id?: number;
-  scenario_name: string;
-  base_demand: number;
-  demand_change_pct: number;
-  forecast_demand: number;
-  lower_bound: number;
-  upper_bound: number;
-  capacity_limit: number;
-  enable_ot: boolean;
-  actual_produce: number;
-  shortage_qty: number;
-  service_level_pct: number;
-  revenue_thb: number;
-  extra_cost_thb: number;
-  constraint_status: string;
-  model_name: string;
-  created_by: string;
-  created_at?: string;
-}
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
-const OFFLINE_MESSAGE = `cannot reach the backend at ${API_BASE_URL}`;
-
-// What-if inputs; every figure on the page is computed from them by the backend
-interface SimulationInputs {
-  scenario_name: string;
-  base_demand: number;
-  demand_change_pct: number;
-  enable_ot: boolean;
-  created_by: string;
-}
+import { DemandForecastPanel } from '@/features/forecast/components/DemandForecastPanel';
+import { ModelPerformancePanel } from '@/features/forecast/components/ModelPerformancePanel';
+import type { ScenarioResult, SimulationInputs } from '@/features/simulation/types';
+import { API_BASE_URL, backendAnswered, describeFailure, getJson, postJson } from '@/lib/apiClient';
 
 const INITIAL_INPUTS: SimulationInputs = {
   scenario_name: 'Demand Surge (+20%) Analysis',
@@ -90,13 +57,8 @@ const PRESETS: Record<PresetType, { inputs: Omit<SimulationInputs, 'created_by'>
 };
 
 // POST /api/simulate - the planning rules live only in the backend
-async function requestSimulation(inputs: SimulationInputs): Promise<ScenarioResult> {
-  const res = await fetch(`${API_BASE_URL}/api/simulate`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(inputs),
-  });
-  return readJson<ScenarioResult>(res);
+function requestSimulation(inputs: SimulationInputs): Promise<ScenarioResult> {
+  return postJson<ScenarioResult>('/api/simulate', inputs);
 }
 
 export default function IBPPlatformDashboard() {
@@ -151,16 +113,14 @@ export default function IBPPlatformDashboard() {
 
   // A failed backend call: say what failed and why, never substitute data
   const reportFailure = (action: string, err: unknown) => {
-    const reachable = err instanceof ApiError;
-    setBackendOnline(reachable);
-    showToast(`${action} failed: ${reachable ? err.message : OFFLINE_MESSAGE}`, 'error');
+    setBackendOnline(backendAnswered(err));
+    showToast(`${action} failed: ${describeFailure(err)}`, 'error');
   };
 
   // Check Backend Health (and where saved scenarios end up)
   const checkBackendHealth = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE_URL}/api/health`, { method: 'GET', credentials: 'omit' });
-      const health = await readJson<{ storage?: 'database' | 'memory' }>(res);
+      const health = await getJson<{ storage?: 'database' | 'memory' }>('/api/health');
       setBackendOnline(true);
       setStorageMode(health.storage ?? null);
     } catch {
@@ -172,14 +132,14 @@ export default function IBPPlatformDashboard() {
   const fetchScenarios = useCallback(async () => {
     setIsLoadingHistory(true);
     try {
-      const data = await readJson<ScenarioResult[]>(await fetch(`${API_BASE_URL}/api/scenarios`));
+      const data = await getJson<ScenarioResult[]>('/api/scenarios');
       setHistory(data);
       setHistoryError(null);
       setBackendOnline(true);
     } catch (err) {
       setHistory([]);
-      setHistoryError(err instanceof ApiError ? err.message : OFFLINE_MESSAGE);
-      if (!(err instanceof ApiError)) setBackendOnline(false);
+      setHistoryError(describeFailure(err));
+      if (!backendAnswered(err)) setBackendOnline(false);
     } finally {
       setIsLoadingHistory(false);
     }
@@ -233,18 +193,13 @@ export default function IBPPlatformDashboard() {
   const handleSaveScenario = async () => {
     setIsSaving(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/scenarios/save`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          scenario_name: scenarioName || 'What-If Plan',
-          base_demand: currentResult.base_demand,
-          demand_change_pct: currentResult.demand_change_pct,
-          enable_ot: currentResult.enable_ot,
-          created_by: createdBy || 'Planner',
-        }),
+      const saved = await postJson<ScenarioResult>('/api/scenarios/save', {
+        scenario_name: scenarioName || 'What-If Plan',
+        base_demand: currentResult.base_demand,
+        demand_change_pct: currentResult.demand_change_pct,
+        enable_ot: currentResult.enable_ot,
+        created_by: createdBy || 'Planner',
       });
-      const saved = await readJson<ScenarioResult>(res);
       setHistory((prev) => [saved, ...prev]);
       setHistoryError(null);
       setBackendOnline(true);

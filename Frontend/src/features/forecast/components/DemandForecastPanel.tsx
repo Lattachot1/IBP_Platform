@@ -25,7 +25,8 @@ import {
   ForecastResponse,
   GradeModel,
   HistoryResponse,
-} from '../lib/forecastApi';
+} from '../api';
+import { formatRounded } from '@/lib/format';
 
 interface ChartRow {
   period: string;
@@ -34,8 +35,6 @@ interface ChartRow {
   band: [number, number] | null;
 }
 
-const fmt = (v: number | null | undefined) =>
-  v === null || v === undefined ? '-' : Math.round(v).toLocaleString('en-US');
 
 const HISTORY_MONTHS_SHOWN = 36;
 
@@ -212,14 +211,14 @@ export function DemandForecastPanel() {
                   formatter={(value, name) => {
                     if (Array.isArray(value)) {
                       return [
-                        `${fmt(Number(value[0]))} - ${fmt(Number(value[1]))} t`,
+                        `${formatRounded(Number(value[0]))} - ${formatRounded(Number(value[1]))} t`,
                         '80% Interval',
                       ];
                     }
                     const n = Number(value);
                     const label =
                       name === 'actual' ? 'Actual' : name === 'forecast' ? 'Forecast' : String(name);
-                    return [`${fmt(Number.isFinite(n) ? n : null)} t`, label];
+                    return [`${formatRounded(Number.isFinite(n) ? n : null)} t`, label];
                   }}
                   labelStyle={{ fontWeight: 600 }}
                   contentStyle={{ fontSize: 12, borderRadius: 8, border: '1px solid #e2e8f0' }}
@@ -275,12 +274,12 @@ export function DemandForecastPanel() {
               </div>
               <div className="flex items-baseline gap-1.5">
                 <span className="text-2xl font-black text-slate-900 font-mono">
-                  {fmt(forecast.total_forecast_tons)}
+                  {formatRounded(forecast.total_forecast_tons)}
                 </span>
                 <span className="text-xs text-slate-500">ton</span>
               </div>
               <div className="text-[11px] text-slate-500 mt-1.5">
-                80% interval: {fmt(Math.min(...forecast.lower_tons))} – {fmt(Math.max(...forecast.upper_tons))} t
+                80% interval: {formatRounded(Math.min(...forecast.lower_tons))} – {formatRounded(Math.max(...forecast.upper_tons))} t
               </div>
             </div>
 

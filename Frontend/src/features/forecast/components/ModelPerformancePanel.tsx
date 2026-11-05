@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { ShieldCheck, RefreshCw } from 'lucide-react';
-import { fetchModels, GradeModel, ModelsResponse } from '../lib/forecastApi';
+import { fetchModels, GradeModel, ModelsResponse } from '../api';
 
 const NAIVE = 'SeasonalNaive(m=12)';
 

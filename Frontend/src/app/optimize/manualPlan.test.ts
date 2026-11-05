@@ -16,7 +16,8 @@ import {
   swapCampaign,
   type Draft,
 } from './manualPlan';
-import { SAMPLE_PLAN, type OptimizeResult } from './samplePlan';
+import { SAMPLE_PLAN } from './samplePlan';
+import type { OptimizeResult } from '@/features/optimize/types';
 
 // 28-day draft: BR150 10d | VCR617 10d | BR150L 8d, BR grades on RX1-2
 // from day 0 and on RX3-4 from day 3 of the last campaign.
