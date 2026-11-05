@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { Factory, Layers } from 'lucide-react';
+import { Database, Factory, Layers } from 'lucide-react';
 
 export function DashboardHeader({ backendOnline }: { backendOnline: boolean | null }) {
   return (
@@ -31,6 +31,13 @@ export function DashboardHeader({ backendOnline }: { backendOnline: boolean | nu
 
           {/* Status & Actions */}
           <div className="flex items-center gap-3 self-end md:self-auto">
+            <Link
+              href="/planning-data"
+              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
+            >
+              <Database className="w-3.5 h-3.5" />
+              Planning Data
+            </Link>
             <Link
               href="/optimize"
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition-colors shadow-sm"
