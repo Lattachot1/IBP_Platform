@@ -186,6 +186,16 @@ def _new_connection():
     )
 
 
+def open_connection():
+    """A fresh connection for the stores in planning_data; the caller closes it.
+
+    Raises when no database is configured or it cannot be reached.
+    """
+    if _conn_params is None:
+        raise RuntimeError("Database not configured (in-memory mode)")
+    return _new_connection()
+
+
 def is_configured() -> bool:
     """True when a database is configured (database mode), reachable or not."""
     return _conn_params is not None

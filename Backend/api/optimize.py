@@ -1,5 +1,7 @@
-"""Production schedule optimization (CP-SAT) and hand-edited plan checks."""
+"""Production schedule optimization (CP-SAT), hand-edited plan checks and
+the product catalog the plan form is built from."""
 
+import logging
 import math
 
 from fastapi import APIRouter, HTTPException
@@ -7,8 +9,41 @@ from fastapi import APIRouter, HTTPException
 from optimization import engine as optimization_engine
 from optimization import manual as optimization_manual
 from optimization.schemas import EvaluateRequest, OptimizeRequest
+from planning_data import products
+
+log = logging.getLogger("ibp.api.optimize")
 
 router = APIRouter(tags=["optimize"])
+
+
+@router.get("/api/v1/optimize/catalog")
+def handle_catalog() -> dict:
+    """The product groups of plant_config.yaml, each with its active products.
+
+    `unassigned` lists active products whose group is no longer in
+    plant_config.yaml: they cannot be planned until they are moved to an
+    existing group (PATCH /api/v1/products/{material_no}).
+    """
+    groups = optimization_engine.plant_groups()
+    try:
+        active = products.get_store().list(active=True)
+    except products.StoreUnavailable:
+        log.exception("[Database] Products: catalog query failed")
+        raise HTTPException(status_code=503, detail="Database unavailable: could not load the product catalog")
+
+    by_group = {g["id"]: dict(g, products=[]) for g in groups}
+    unassigned = []
+    for product in active:
+        entry = {
+            "material_no": product.material_no,
+            "description": product.description,
+            "min_stock_tons": product.min_stock_tons,
+        }
+        if product.group_code in by_group:
+            by_group[product.group_code]["products"].append(entry)
+        else:
+            unassigned.append(dict(entry, group_code=product.group_code))
+    return {"groups": list(by_group.values()), "unassigned": unassigned}
 
 
 def _reject_non_finite(values: dict) -> None:
