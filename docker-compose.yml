@@ -1,5 +1,4 @@
-version: '3.8'
-
+# Secrets and ports come from .env (copy .env.example; never commit .env)
 services:
   # 1. Microsoft SQL Server 2022 Container
   mssql:
@@ -8,23 +7,44 @@ services:
     restart: unless-stopped
     environment:
       - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=YourStrong@Password!
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env (see .env.example)}
       - MSSQL_PID=Developer
     ports:
-      - "1433:1433"
+      # Host-only: the database is not reachable from the network
+      - "127.0.0.1:1433:1433"
     volumes:
       - mssql-data:/var/opt/mssql
-      - ./init-db:/docker-entrypoint-initdb.d
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'YourStrong@Password!' -C -Q 'SELECT 1' || exit 1"]
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 20s
+      retries: 10
+      start_period: 30s
     networks:
       - ube-ibp-network
 
-  # 2. Unified Python Backend (Simulation & Constraint Engine + Forecasting Engine)
+  # 2. One-shot schema + app login setup. The SQL Server image does not run
+  #    /docker-entrypoint-initdb.d scripts, so init-db/*.sql runs from here.
+  db-init:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: ube-ibp-db-init
+    restart: "no"
+    environment:
+      - MSSQL_SA_PASSWORD=${MSSQL_SA_PASSWORD:?set MSSQL_SA_PASSWORD in .env (see .env.example)}
+      - IBP_APP_PASSWORD=${IBP_APP_PASSWORD:?set IBP_APP_PASSWORD in .env (see .env.example)}
+    volumes:
+      - ./init-db:/init-db:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - /opt/mssql-tools18/bin/sqlcmd -S mssql -U sa -P "$$MSSQL_SA_PASSWORD" -C -b
+        -i /init-db/01-init.sql,/init-db/02-app-login.sql -v APP_PASSWORD="$$IBP_APP_PASSWORD"
+    depends_on:
+      mssql:
+        condition: service_healthy
+    networks:
+      - ube-ibp-network
+
+  # 3. Unified Python Backend (Simulation & Constraint Engine + Forecasting Engine)
   backend:
     build:
       context: ./Backend
@@ -32,27 +52,42 @@ services:
     container_name: ube-ibp-backend
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${BACKEND_PORT:-8080}:8080"
     environment:
       - PORT=8080
-      - DATABASE_URL=sqlserver://sa:YourStrong@Password!@mssql:1433?database=IBP_DB
+      - DATABASE_URL=sqlserver://ibp_app:${IBP_APP_PASSWORD:?set IBP_APP_PASSWORD in .env (see .env.example)}@mssql:1433?database=IBP_DB
+      - DEMAND_DATA_DIR=/data/DemandModel
+    volumes:
+      # Client billing data stays on the host (gitignored, never in the image)
+      - ./DemandModel:/data/DemandModel:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/health', timeout=5)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      # The forecast models train at startup before the port opens: ~14 min
+      # on a 12-core laptop under Docker Desktop, so leave generous headroom
+      start_period: 30m
     depends_on:
       mssql:
         condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
     networks:
       - ube-ibp-network
 
-  # 3. Next.js Frontend (Executive Dashboard)
+  # 4. Next.js Frontend (Executive Dashboard)
   frontend:
     build:
       context: ./Frontend
       dockerfile: Dockerfile
+      args:
+        # The URL the *browser* uses to reach the backend (inlined at build time)
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8080}
     container_name: ube-ibp-frontend
     restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8080
     depends_on:
       - backend
     networks:

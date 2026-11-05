@@ -1,0 +1,8 @@
+# Host builds must not leak into the image: node_modules from Windows/macOS
+# carries platform-specific binaries, the image runs `npm ci` itself.
+node_modules
+.next
+*.tsbuildinfo
+npm-debug.log*
+Dockerfile
+.dockerignore

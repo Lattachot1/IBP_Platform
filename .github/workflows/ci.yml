@@ -25,7 +25,7 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: 20   # same as Frontend/Dockerfile
+          node-version: 22   # same as Frontend/Dockerfile
           cache: npm
           cache-dependency-path: Frontend/package-lock.json
       - run: npm ci
@@ -50,3 +50,14 @@ jobs:
           cache-dependency-path: Backend/requirements*.txt
       - run: pip install -r requirements-dev.txt
       - run: pytest
+
+  docker:
+    name: Docker images build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      # Placeholder values from the template: build needs them interpolated
+      - run: cp .env.example .env
+      - run: docker compose config --quiet
+      - run: docker compose build
