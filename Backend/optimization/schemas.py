@@ -27,6 +27,9 @@ class OptimizeRequest(BaseModel):
     holidays: List[str] = Field(default_factory=list)   # ISO dates, company holidays
     time_limit_s: int = Field(default=30, ge=5, le=300)
     initial: InitialState = Field(default_factory=InitialState)
+    # Plan per product from the planning data (stock, QC lots, open orders,
+    # monthly forecast) instead of `demand`; see optimization/planning.py
+    use_planning_data: bool = False
 
 
 # ---- hand-edited plan (editable Gantt) → POST /api/v1/optimize/evaluate ----
