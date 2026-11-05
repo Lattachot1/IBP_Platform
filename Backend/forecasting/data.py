@@ -21,7 +21,8 @@ from pathlib import Path
 import pandas as pd
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = REPO_ROOT / "DemandModel"
+# Locally the data sits at the repo root; Docker mounts it elsewhere
+DATA_DIR = Path(os.getenv("DEMAND_DATA_DIR", "").strip() or REPO_ROOT / "DemandModel")
 
 DATE_COL = "Billing Date"
 QTY_COL = "QTY(ton)"

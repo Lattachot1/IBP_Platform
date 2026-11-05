@@ -83,16 +83,26 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
 
 ### วิธีที่ 2: Deploy ด้วย Docker Compose (Full Stack with MS SQL Server)
 
-เมื่อเปิดใช้งาน Docker Desktop บนเครื่องของคุณ สามารถสั่งรันทุกเซอร์วิสพร้อม MS SQL 2022 ด้วยคำสั่งเดียว:
+เมื่อเปิดใช้งาน Docker Desktop บนเครื่องของคุณ:
 
-```bash
-docker compose up -d --build
-```
+1. สร้างไฟล์ `.env` จากตัวอย่าง แล้วตั้งรหัสผ่านของตัวเอง (ไฟล์ `.env` ถูก gitignore ไว้ ห้าม commit):
+   ```bash
+   cp .env.example .env
+   ```
+2. (ถ้ามี) วางข้อมูล billing ของลูกค้าไว้ที่ `DemandModel/` — Docker จะ mount เข้า backend แบบอ่านอย่างเดียว ไม่ฝังลงใน image ถ้าไม่มี ระบบยังรันได้แต่ Forecast API จะตอบ 503
+3. รันทุกเซอร์วิสด้วยคำสั่งเดียว (ครั้งแรกใช้เวลานาน: ดาวน์โหลด image และเทรนโมเดลตอน start หลายนาที):
+   ```bash
+   docker compose up -d --build
+   ```
 
 **Services ที่จะถูกเปิดใช้งาน:**
 - **Frontend Dashboard:** `http://localhost:3000`
-- **Python Backend API (รวม Forecasting Engine):** `http://localhost:8080` (Swagger docs ที่ `http://localhost:8080/docs`)
-- **MS SQL Server 2022:** `localhost:1433` (User: `sa`, Password: `YourStrong@Password!`, Database: `IBP_DB`)
+- **Python Backend API (รวม Forecasting Engine):** `http://localhost:8080` (Swagger docs ที่ `http://localhost:8080/docs`) — เปลี่ยน port ได้ด้วย `BACKEND_PORT` ใน `.env`
+- **MS SQL Server 2022:** `127.0.0.1:1433` (เปิดเฉพาะเครื่องนี้), Database: `IBP_DB`
+  - `db-init` สร้าง schema + seed (`init-db/01-init.sql`) และ login `ibp_app` ที่ backend ใช้ (อ่าน/เขียน `IBP_DB` เท่านั้น — `init-db/02-app-login.sql`)
+  - รหัสผ่านของ `sa` และ `ibp_app` อยู่ใน `.env`
+
+> ถ้าเครื่องอื่นจะเปิด dashboard ให้ตั้ง `NEXT_PUBLIC_API_URL` ใน `.env` เป็นที่อยู่ของเครื่อง server แล้ว build ใหม่ (`docker compose up -d --build`) เพราะค่านี้ถูกฝังใน frontend ตอน build
 
 ---
 
