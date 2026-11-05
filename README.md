@@ -28,10 +28,10 @@ IBP_Platform/
 ├── Backend/                       # Unified Python Backend (FastAPI)
 │   ├── Dockerfile                 # Python 3.12-slim container image
 │   ├── requirements.txt           # fastapi, uvicorn, pydantic, pymssql
-│   ├── main.py                    # Simulation & Constraint Engine + REST API (MS SQL & In-Memory Fallback)
+│   ├── main.py                    # Simulation & Constraint Engine + REST API (MS SQL, or in-memory without a DB)
 │   ├── forecasting.py             # In-process Forecasting Engine (รวม model-service เดิมไว้ภายใน)
 │   ├── optimization/              # Production Schedule Optimizer: engine.py (CP-SAT) + manual.py (rule check for hand-edited plans) + plant_config.yaml
-│   └── database.py                # MS SQL Access Layer (pymssql) พร้อม In-Memory Fallback
+│   └── database.py                # MS SQL Access Layer (pymssql) — DB ล่มตอบ 503 ไม่แอบเก็บใน RAM
 └── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
     ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React
@@ -52,7 +52,7 @@ IBP_Platform/
 
 ### วิธีที่ 1: รัน Frontend & Backend ทันที (Standalone Mode - ไม่ต้องใช้ DB หรือ Docker)
 
-ระบบได้รับการออกแบบให้มี **In-Memory Fallback Store** และ **Direct Calculation Engine** ทำให้สามารถรันและทดสอบได้ทันทีบนเครื่องของคุณ:
+ถ้าไม่ได้ตั้งค่าฐานข้อมูล Backend จะเก็บ scenario ไว้ใน **In-Memory Store** (หายเมื่อ restart backend) จึงรันและทดสอบบนเครื่องได้ทันที ตัวเลขทุกตัวบนหน้าเว็บคำนวณโดย Backend เท่านั้น:
 
 #### 1.1 รัน Frontend (Next.js - Port 3000)
 ```powershell
@@ -64,7 +64,7 @@ npm install
 npm run dev
 ```
 เปิดบราวเซอร์ที่: **`http://localhost:3000`**  
-*(หมายเหตุ: หน้า Dashboard มีระบบ Direct Simulation Engine ในตัว แม้ยังไม่ได้เปิด Backend หน้าเว็บก็สามารถจำลองสถานการณ์และคำนวณผลลัพธ์ได้อย่างแม่นยำ)*
+*(หมายเหตุ: ต้องเปิด Backend ด้วย — ถ้า Backend ไม่ทำงาน หน้า Dashboard จะแจ้งว่า offline และไม่ให้ run/save simulation แทนการคำนวณเองในเบราว์เซอร์ กฎการวางแผนจึงมีที่เดียวคือ Backend)*
 
 #### 1.2 รัน Backend Service (Port 8080)
 ```powershell
@@ -73,7 +73,7 @@ pip install -r requirements.txt
 python main.py
 ```
 Backend จะเริ่มทำงานที่ **`http://localhost:8080`**
-*(หากไม่ได้ตั้งค่าฐานข้อมูล ระบบจะใช้ In-Memory Fallback Store อัตโนมัติ)*
+*(หากไม่ได้ตั้งค่าฐานข้อมูล ระบบจะใช้ In-Memory Store — ถ้าตั้งค่า DB ไว้แต่ DB ล่ม API จะตอบ 503 แทนการแอบเก็บไว้ใน RAM)*
 
 #### 1.3 Forecasting Engine (รวมอยู่ใน Backend แล้ว)
 Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเข้ากับ Backend เป็นบริการ Python บริการเดียว
