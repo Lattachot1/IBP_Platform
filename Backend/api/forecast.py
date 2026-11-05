@@ -1,0 +1,184 @@
+"""Demand forecasting API (real models trained from the billing data).
+
+Holds the trained engine: set once at startup by train_at_startup() and
+replaced by POST /api/v1/retrain; None means the forecast API answers 503.
+"""
+
+import logging
+import math
+from typing import Optional
+
+from fastapi import APIRouter, HTTPException, Query
+
+log = logging.getLogger("ibp.api.forecast")
+
+router = APIRouter(tags=["forecast"])
+
+# Trained demand-forecasting engine (None = unavailable)
+forecast_engine: Optional[dict] = None
+
+
+def train_at_startup() -> None:
+    """Train the real demand-forecasting engine from the billing data.
+
+    Never fatal: if the data or the ML libraries are missing, the forecast
+    API reports unavailable and the What-if flow keeps working untouched.
+    """
+    global forecast_engine
+    try:
+        from forecasting import service
+        forecast_engine = service.train_all()
+        log.info("[Forecast] Engine trained for %d grades:", len(forecast_engine["grades"]))
+        for grade, info in forecast_engine["grades"].items():
+            log.info("[Forecast]   %s -> %s (WAPE %.1f%%, MASE %.2f)",
+                     grade, info["champion"], info["wape"] * 100, info["mase"])
+    except Exception as exc:
+        forecast_engine = None
+        log.warning("[Forecast WARNING] Engine training skipped: %s", exc)
+
+
+def _require_engine() -> dict:
+    if forecast_engine is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Forecast engine unavailable (billing data or ML libraries missing)",
+        )
+    return forecast_engine
+
+
+def engine_status() -> dict:
+    """Engine summary for /api/health."""
+    if forecast_engine is None:
+        return {"status": "unavailable"}
+    return {
+        "status": "trained",
+        "grades": sorted(forecast_engine["grades"]),
+        "trained_at": forecast_engine["trained_at"],
+    }
+
+
+def _round_or_none(value, digits: int):
+    """Round a metric for JSON; NaN/inf become null (one bad grade must not 500 the leaderboard)."""
+    value = float(value)
+    return round(value, digits) if math.isfinite(value) else None
+
+
+@router.get("/api/v1/models")
+def handle_models():
+    """Champion leaderboard per product grade (from the rolling backtest)."""
+    engine = _require_engine()
+    rows = []
+    for name, info in engine["grades"].items():
+        rows.append({
+            "product_id": name,
+            "champion": info["champion"],
+            "wape": _round_or_none(info["wape"], 4),
+            "mase": _round_or_none(info["mase"], 3),
+            "wape_h1": _round_or_none(info["wape_h"][1], 4),
+            "wape_h2": _round_or_none(info["wape_h"][2], 4),
+            "wape_h3": _round_or_none(info["wape_h"][3], 4),
+            "months": info["months"],
+            "avg_tons": round(info["avg_tons"], 1),
+            "trained_through": info["trained_through"],
+            "interval_level_pct": info["interval_level_pct"],
+            "coverage_empirical": _round_or_none(info["coverage_empirical"], 3),
+        })
+    return {"trained_at": engine["trained_at"], "models": rows}
+
+
+@router.get("/api/v1/history")
+def handle_history(product_id: str = Query(default=None)):
+    """Historical monthly tonnage for one grade (the actuals behind the model)."""
+    engine = _require_engine()
+    grades = engine["grades"]
+    if product_id is None:
+        product_id = next(iter(grades))
+    if product_id not in grades:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "unknown product_id", "available": sorted(grades)},
+        )
+
+    series = engine["series"][product_id]
+    return {
+        "product_id": product_id,
+        "trained_through": grades[product_id]["trained_through"],
+        "months": [{"period": str(period), "tons": round(float(tons), 1)}
+                   for period, tons in series.items()],
+        "avg_tons": round(float(series.mean()), 1),
+        "total_tons": round(float(series.sum()), 1),
+    }
+
+
+@router.get("/api/v1/forecast")
+def handle_forecast(
+    product_id: str = Query(default=None),
+    horizon_months: int = Query(default=3, ge=1, le=12),
+    demand_change_pct: float = Query(default=0.0),
+):
+    """Demand forecast for one grade over a horizon (monthly, tons)."""
+    from forecasting import service
+
+    if not math.isfinite(demand_change_pct):
+        raise HTTPException(status_code=400, detail="demand_change_pct must be a finite number")
+
+    engine = _require_engine()
+    grades = engine["grades"]
+    if product_id is None:
+        product_id = next(iter(grades))
+    if product_id not in grades:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "unknown product_id", "available": sorted(grades)},
+        )
+
+    info = grades[product_id]
+    result = service.forecast(info, horizon_months, demand_change_pct)
+    forecast_rounded = [round(float(v), 1) for v in result["forecast_tons"]]
+
+    return {
+        "product_id": product_id,
+        "basis": "monthly tonnage from Billing Date, net of returns",
+        "trained_through": info["trained_through"],
+        "horizon_months": horizon_months,
+        "periods": result["periods"],
+        "baseline_tons": [round(float(v), 1) for v in result["baseline_tons"]],
+        "forecast_tons": forecast_rounded,
+        "lower_tons": [round(float(v), 1) for v in result["lower_tons"]],
+        "upper_tons": [round(float(v), 1) for v in result["upper_tons"]],
+        "total_forecast_tons": round(sum(forecast_rounded), 1),
+        "demand_change_pct": demand_change_pct,
+        "model_name": info["champion"],
+        "interval": {
+            "level_pct": info["interval_level_pct"],
+            "method": "per-horizon residual-quantile bands from a monthly-stepped backtest; "
+                      "beyond it a conservative sqrt(h) extrapolation; band scales with the scenario uplift",
+            "coverage_empirical": round(info["coverage_empirical"], 3),
+        },
+        "metrics": {
+            "wape": _round_or_none(info["wape"], 4),
+            "mase": _round_or_none(info["mase"], 3),
+        },
+    }
+
+
+@router.post("/api/v1/retrain")
+def handle_retrain():
+    """Refit all champion models from the billing data (runs in seconds)."""
+    global forecast_engine
+    from forecasting import service
+    try:
+        forecast_engine = service.train_all()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Retrain failed, previous engine kept: %s" % exc,
+        )
+    return {
+        "status": "retrained",
+        "trained_at": forecast_engine["trained_at"],
+        "grades": {
+            name: {"champion": info["champion"], "wape": round(info["wape"], 4)}
+            for name, info in forecast_engine["grades"].items()
+        },
+    }

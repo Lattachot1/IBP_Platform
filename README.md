@@ -21,29 +21,44 @@
 
 ```
 IBP_Platform/
-├── docker-compose.yml             # Full-stack Docker orchestration (MS SQL, Backend, Frontend)
+├── docker-compose.yml             # Full-stack Docker orchestration (MS SQL, db-init, Backend, Frontend)
+├── .env.example                   # ตัวอย่างค่า .env (รหัสผ่าน DB, port) — copy เป็น .env
 ├── README.md                      # คู่มือระบบและคำสั่งเริ่มต้น
+├── .github/workflows/ci.yml       # CI: lint, type check, tests, build, docker build ทุก PR
 ├── init-db/
-│   └── 01-init.sql                # T-SQL Script สร้าง Database IBP_DB, Scenarios Table และ Seed Data
+│   ├── 01-init.sql                # T-SQL Script สร้าง Database IBP_DB, Scenarios Table และ Seed Data
+│   └── 02-app-login.sql           # Login ibp_app (อ่าน/เขียน IBP_DB เท่านั้น) ที่ backend ใช้
 ├── Backend/                       # Unified Python Backend (FastAPI)
 │   ├── Dockerfile                 # Python 3.12-slim container image
-│   ├── requirements.txt           # fastapi, uvicorn, pydantic, pymssql
-│   ├── main.py                    # Simulation & Constraint Engine + REST API (MS SQL, or in-memory without a DB)
-│   ├── forecasting.py             # In-process Forecasting Engine (รวม model-service เดิมไว้ภายใน)
+│   ├── requirements.txt           # runtime dependencies (requirements-dev.txt = + pytest)
+│   ├── main.py                    # สร้าง app: CORS, 422 handler, startup, include routers
+│   ├── api/                       # REST endpoints แยกตามกลุ่ม
+│   │   ├── health.py              # GET /api/health
+│   │   ├── scenarios.py           # /api/simulate, /api/scenarios (+ /save)
+│   │   ├── forecast.py            # /api/v1/models, history, forecast, retrain (+ engine state)
+│   │   └── optimize.py            # /api/v1/optimize (+ /evaluate)
+│   ├── simulation.py              # กฎ What-if (capacity/OT/revenue), Scenario models, in-memory store
+│   ├── database.py                # MS SQL Access Layer (pymssql) — DB ล่มตอบ 503 ไม่แอบเก็บใน RAM
+│   ├── forecasting/               # Demand forecasting engine (data, models, backtest, service)
 │   ├── optimization/              # Production Schedule Optimizer: engine.py (CP-SAT) + manual.py (rule check for hand-edited plans) + plant_config.yaml
-│   └── database.py                # MS SQL Access Layer (pymssql) — DB ล่มตอบ 503 ไม่แอบเก็บใน RAM
+│   └── tests/                     # pytest (API, database mode, forecast state, optimizer selftest)
 └── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
-    ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React
+    ├── package.json               # Next.js 14, React 18, Tailwind CSS, Lucide React, Vitest
     ├── tsconfig.json
     ├── tailwind.config.js
     ├── next.config.mjs            # Standalone output configuration
     └── src/
-        └── app/
-            ├── layout.tsx         # Enterprise theme layout
-            ├── page.tsx           # Single-Page Executive Dashboard & Simulator
-            ├── optimize/          # Production Optimization page (/optimize): ตารางรายวันรายเตา RX1–RX4, Constraint check
-            └── globals.css        # Tailwind styling & animations
+        ├── app/                   # routing เท่านั้น — แต่ละหน้าแค่ประกอบ component
+        │   ├── layout.tsx         # Enterprise theme layout
+        │   ├── page.tsx           # Executive Dashboard & What-if Simulator
+        │   ├── optimize/          # Production Optimization page (/optimize)
+        │   └── globals.css        # Tailwind styling & animations
+        ├── features/              # โค้ดแยกตาม feature: hook (state + API) + components + tests
+        │   ├── simulation/        # What-if dashboard
+        │   ├── forecast/          # AI demand forecast panels
+        │   └── optimize/          # Gantt แผนผลิตรายวัน, hand-edit mode, plan form
+        └── lib/                   # apiClient (base URL, timeout, errors), apiError, format
 ```
 
 ---

@@ -13,7 +13,9 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+import database
 import main
+import simulation
 
 client = TestClient(main.app)
 
@@ -158,18 +160,18 @@ def _raise_down(*_args, **_kwargs):
 @pytest.fixture
 def database_mode(monkeypatch):
     """Pretend a database is configured; tests patch the DB calls."""
-    monkeypatch.setattr(main.database, "is_configured", lambda: True)
+    monkeypatch.setattr(database, "is_configured", lambda: True)
     return monkeypatch
 
 
 def test_failed_insert_is_503_and_not_kept_in_memory(database_mode):
-    database_mode.setattr(main.database, "insert_scenario", _raise_down)
-    before = len(main.store.recent(1000))
+    database_mode.setattr(database, "insert_scenario", _raise_down)
+    before = len(simulation.store.recent(1000))
 
     res = client.post("/api/scenarios/save", json={"scenario_name": "lost?"})
     assert res.status_code == 503
     assert "NOT saved" in res.json()["detail"]
-    assert len(main.store.recent(1000)) == before
+    assert len(simulation.store.recent(1000)) == before
 
 
 def test_insert_stores_recomputed_values(database_mode):
@@ -179,7 +181,7 @@ def test_insert_stores_recomputed_values(database_mode):
         inserted.update(values)
         return 42, datetime(2026, 11, 5, tzinfo=timezone.utc)
 
-    database_mode.setattr(main.database, "insert_scenario", fake_insert)
+    database_mode.setattr(database, "insert_scenario", fake_insert)
     res = client.post("/api/scenarios/save", json={"demand_change_pct": 20, "revenue_thb": 1})
     assert res.status_code == 201
     assert res.json()["scenario_id"] == 42
@@ -187,13 +189,13 @@ def test_insert_stores_recomputed_values(database_mode):
 
 
 def test_failed_query_is_503_not_memory_seeds(database_mode):
-    database_mode.setattr(main.database, "fetch_top_scenarios", _raise_down)
+    database_mode.setattr(database, "fetch_top_scenarios", _raise_down)
     res = client.get("/api/scenarios")
     assert res.status_code == 503
 
 
 def test_empty_database_lists_nothing(database_mode):
-    database_mode.setattr(main.database, "fetch_top_scenarios", lambda limit: [])
+    database_mode.setattr(database, "fetch_top_scenarios", lambda limit: [])
     assert client.get("/api/scenarios").json() == []
 
 
