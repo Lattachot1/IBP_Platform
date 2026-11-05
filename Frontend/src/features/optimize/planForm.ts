@@ -23,6 +23,8 @@ export interface PlanForm {
   rx34Age: number;
   timeLimitS: number;
   demand: Record<string, number>;
+  /** plan per product from the planning data instead of `demand` */
+  usePlanningData: boolean;
 }
 
 // Changeover penalty per objective (tons-equivalent per changeover day),
@@ -44,6 +46,7 @@ export const BASE_FORM: PlanForm = {
   rx34Age: 0,
   timeLimitS: 30,
   demand: { ...DEMAND_DEFAULT },
+  usePlanningData: false,
 };
 
 export function toIso(d: Date): string {
@@ -89,6 +92,7 @@ export function buildRequest(f: PlanForm) {
       rx12_age: clamp(f.rx12Age, 0, 365),
       rx34_age: clamp(f.rx34Age, 0, 365),
     },
+    use_planning_data: f.usePlanningData,
   };
 }
 

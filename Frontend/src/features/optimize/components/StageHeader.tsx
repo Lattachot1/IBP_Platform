@@ -13,6 +13,7 @@ export function StageHeader({ plan, view }: { plan: OptimizePlan; view: Optimize
           <span className={'opt-sub' + (unapplied && !editing ? ' old' : '')}>
             {view.start_date} · starts from {dispOf(shown?.form.initGrade ?? form.initGrade, grades)} ·{' '}
             {editing ? 'hand-edited plan (optimized plan shown as ghost)' : offline ? 'built-in sample data' : 'live backend result'}
+            {view.planning && !editing ? ' · planned per product from the planning data' : ''}
           </span>
         </span>
         {unapplied && !editing && <span className="opt-chip stale">Result for previous inputs</span>}

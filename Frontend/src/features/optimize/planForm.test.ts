@@ -17,7 +17,12 @@ describe('buildRequest', () => {
       holidays: [],
       time_limit_s: 30,
       initial: { grade: 'BR150', remain_days: 2, rx12_age: 54, rx34_age: 0 },
+      use_planning_data: false,
     });
+  });
+
+  it('asks for the product-level plan when planning data is switched on', () => {
+    expect(buildRequest({ ...BASE_FORM, usePlanningData: true }).use_planning_data).toBe(true);
   });
 
   it('clamps to the ranges the backend accepts (no 422 from the page)', () => {

@@ -35,6 +35,12 @@ export interface PlanDay {
   rx: string;
   note: string;
   conflict?: boolean;   // evaluator only: a rule is broken on this day
+  products?: ProductTons[];   // use_planning_data only: the day's output per product
+}
+
+export interface ProductTons {
+  material_no: string;
+  tons: number;
 }
 
 export interface CheckItem {
@@ -77,4 +83,74 @@ export interface OptimizeResult {
   pair_notes: Record<string, string>;
   checks: CheckItem[];
   assumptions: string[];
+  planning?: PlanningSection;   // use_planning_data only
+}
+
+// ---- product-level planning (Backend/optimization/planning.py report) ----
+
+export type OrderStatus = 'on_time' | 'late' | 'not_covered' | 'after_horizon';
+
+export interface PlannedOrder {
+  order_no: string;
+  item_no: number;
+  material_no: string;
+  open_tons: number;
+  due_date: string;
+  ready_date: string | null;
+  late_days: number | null;
+  status: OrderStatus;
+  in_horizon: boolean;
+}
+
+/** Daily arrays have one value per plan day. */
+export interface PlannedProduct {
+  material_no: string;
+  description: string;
+  group: string;
+  min_stock: number;
+  start_stock: number;
+  qc_release: number[];
+  shipped: number[];
+  produced: number[];
+  stock: number[];
+  end_stock: number;
+  days_below_min: number;
+  share: number;
+  lookahead_tons: number;
+}
+
+export interface ForecastMonthRow {
+  group: string;
+  month: string;
+  source: string;
+  forecast: number;
+  ordered: number;
+  not_yet_ordered: number;
+  share_in_horizon: number;
+  to_produce: number;
+  deadline: string;
+  short_tons: number;
+}
+
+export interface PlanningKpis {
+  orders_in_horizon: number;
+  orders_on_time: number;
+  orders_late: number;
+  orders_not_covered: number;
+  on_time_pct: number;
+  on_time_tons_pct: number;
+  late_ton_days: number;
+  below_min_ton_days: number;
+  forecast_short_tons: number;
+}
+
+export interface PlanningSection {
+  snapshot_date: string | null;
+  qc_days: number;
+  kpis: PlanningKpis;
+  products: PlannedProduct[];
+  orders: PlannedOrder[];
+  forecast: ForecastMonthRow[];
+  warnings: string[];
+  unallocated_tons?: Record<string, number>;
 }

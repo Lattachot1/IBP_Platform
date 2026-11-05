@@ -177,6 +177,7 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
   curl -X POST "http://localhost:8080/api/v1/imports/sales-orders?dry_run=true" -H "Content-Type: text/csv" --data-binary @Backend/sample_data/mock/sap_sales_orders.csv
   ```
 - `GET /api/v1/stock` (`?on=` snapshot ล่าสุดไม่เกินวันนั้น), `GET /api/v1/qc-lots` (`?status=`), `GET /api/v1/sales-orders` (`?status=&due_from=&due_to=`, มี `open_tons`), `GET /api/v1/forecasts` (`?month_from=&month_to=`) — ถ้าไม่ได้ตั้งค่า DB จะเริ่มด้วยข้อมูลสมมติจาก `Backend/sample_data/mock/`
+- หน้า `/optimize` โหมด **Planning data — plan per product** (เลือกใน Demand source): วางแผนจากข้อมูลวางแผนแทนตัวเลข demand ราย grade แล้วแสดง KPI ของ order/สต็อก, ตารางสถานะ order (วันพร้อมส่ง/ช้ากี่วัน), กราฟสต็อกคาดการณ์ราย product เทียบขั้นต่ำ, ตาราง forecast ราย group-เดือน และ tooltip บน Gantt บอกผลผลิตราย product (โหมดแก้แผนด้วยมือยังใช้กับแผนแบบนี้ไม่ได้)
 - หน้า `/planning-data` — Planning Data (ลิงก์จาก Dashboard): แก้/เพิ่ม/เลิกขายสินค้าใน product master, import CSV ทั้ง 4 แบบโดยกด **Check file** (dry run แสดงบรรทัด/คอลัมน์ที่ผิด) ก่อน **Import**, และดูสต็อก, lot รอ QC, order, forecast ที่อยู่ในระบบ
 - `POST /api/scenarios/save` — บันทึกผลลัพธ์ Scenario ลง Database และ Audit Trail
 - `GET /api/scenarios` — ดึงประวัติ 10 Scenarios ล่าสุด

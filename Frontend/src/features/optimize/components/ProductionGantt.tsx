@@ -7,7 +7,7 @@ import type { OptimizeResult, PlanDay } from '../types';
 
 // Daily Gantt (plant + RX1-RX4) incl. the hand-edit mode
 export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data: OptimizeResult; view: OptimizeResult }) {
-  const { manual, setManual, setTip, startEditing, stopEditing, updateDraft, onResizeDown, onCleanDown, showTip, grades, hasPlan, editing, conflictDays, starts, selectedCampaign, canEdit, gridCols } = plan;
+  const { manual, setManual, setTip, startEditing, stopEditing, updateDraft, onResizeDown, onCleanDown, showTip, grades, hasPlan, editing, conflictDays, starts, selectedCampaign, canEdit, editBlockedReason, gridCols } = plan;
 
   function dayBlocks(d: PlanDay) {
     return d.parts.map((p, k) => (
@@ -41,7 +41,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
             className="opt-editbtn"
             onClick={startEditing}
             disabled={!canEdit}
-            title={canEdit ? 'Drag campaigns and cleaning windows; every change is checked against the plant rules' : 'Needs a live backend result to check the rules'}
+            title={canEdit ? 'Drag campaigns and cleaning windows; every change is checked against the plant rules' : editBlockedReason ?? undefined}
           >
             ✎ Edit plan
           </button>

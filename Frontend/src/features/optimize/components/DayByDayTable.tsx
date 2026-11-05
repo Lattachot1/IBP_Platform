@@ -35,6 +35,11 @@ export function DayByDayTable({ plan, view }: { plan: OptimizePlan; view: Optimi
                         return seg;
                       })
                       .join(' + ')}
+                    {d.products && d.products.length > 0 && (
+                      <div className="opt-dayprod">
+                        {d.products.map((p) => `${p.material_no} ${formatNumber(p.tons)}`).join(' · ')}
+                      </div>
+                    )}
                   </td>
                   <td>
                     <span className={`opt-chip ${d.chg ? 'chg' : 'run'}`}>

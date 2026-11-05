@@ -5,7 +5,11 @@ import type { OptimizeResult } from '../types';
 export function FulfillmentPanel({ view }: { view: OptimizeResult }) {
   return (
     <section className="opt-panel" aria-label="Demand fulfillment">
-      <h2 className="opt-ph">Fulfillment by grade (produced vs demand in the horizon)</h2>
+      <h2 className="opt-ph">
+        {view.planning
+          ? 'Output by group vs net requirement (orders + minimum stock + forecast − stock and lots in QC)'
+          : 'Fulfillment by grade (produced vs demand in the horizon)'}
+      </h2>
       {view.fulfillment.map((r) => {
         const pct = r.demand > 0 ? Math.min(r.produced / r.demand, 1) * 100 : 0;
         return (

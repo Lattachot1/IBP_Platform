@@ -6,7 +6,7 @@ import { formatNumber } from '@/lib/format';
 import { API_BASE_URL } from '@/lib/apiClient';
 import { DEMAND_DEFAULT, GRADES, SAMPLE_PLAN, dispOf } from './samplePlan';
 import { campaignStarts, cleaningAt, conflictCount, conflictDaysOf, draftFromResult, horizonOf, moveCleaning, resizeCampaign, type Draft, type Pair } from './manualPlan';
-import { HORIZON_MIN, TIME_LIMIT_MAX, OBJECTIVES, BASE_FORM, nextMondayIso, buildRequest, type PlanForm } from './planForm';
+import { HORIZON_MIN, TIME_LIMIT_MAX, OBJECTIVES, BASE_FORM, nextMondayIso, buildRequest, toIso, type PlanForm } from './planForm';
 import type { OptimizeResult, PlanDay } from './types';
 
 // Gantt geometry (keep in sync with .opt-ghead / .opt-grow in optimize.css).
@@ -51,6 +51,17 @@ export interface TipState {
 }
 
 export const STATUS_EN: Record<string, string> = { prod: 'Producing', clean: 'Cleaning', idle: 'Standby' };
+
+/** Tooltip lines for a day's output per product, with the day it clears QC. */
+export function productLines(d: PlanDay, qcDays?: number): string[] {
+  const lines = (d.products ?? []).map((p) => `  · ${p.material_no}: ${formatNumber(p.tons)} t`);
+  if (qcDays !== undefined && lines.length > 0) {
+    const ready = new Date(`${d.iso}T12:00:00`);
+    ready.setDate(ready.getDate() + qcDays);
+    lines.push(`In stock after QC: ${toIso(ready)}`);
+  }
+  return lines;
+}
 
 export function useOptimizePlan() {
   const [form, setForm] = useState<PlanForm>(BASE_FORM);
@@ -337,6 +348,9 @@ export function useOptimizePlan() {
       if (d.chg) line += ` (total ≤ ${formatNumber(d.cap ?? 0)})`;
       lines.push(line);
     });
+    if (d.products && d.products.length > 0) {
+      lines.push(...productLines(d, data?.planning?.qc_days));
+    }
     lines.push(`Reactor: ${d.rx}`);
     if (d.note) lines.push(d.note);
     setTip({
@@ -357,7 +371,15 @@ export function useOptimizePlan() {
   const conflictDays = useMemo(() => conflictDaysOf(manual?.result ?? null), [manual?.result]);
   const starts = manual ? campaignStarts(manual.draft) : [];
   const selectedCampaign = manual && manual.selected !== null ? manual.draft.campaigns[manual.selected] ?? null : null;
-  const canEdit = !!data && data.days.length > 0 && !offline && phase !== 'stale';
+  // The rule checker does not split output over products yet, so a plan
+  // from the planning data cannot be edited by hand (its order and stock
+  // results would silently stop matching the plan).
+  const editBlockedReason = !data || data.days.length === 0 || offline || phase === 'stale'
+    ? 'Needs a live backend result to check the rules'
+    : data.planning
+    ? 'Hand edits are not available yet for a plan built from the planning data'
+    : null;
+  const canEdit = editBlockedReason === null;
   const gridCols = `${LABEL_W}px repeat(${Math.max(1, view?.days.length ?? 1)}, ${CELL_W}px)`;
 
   // Quick fixes offered in the problem banner — each applies and re-solves.
@@ -414,6 +436,7 @@ export function useOptimizePlan() {
     starts,
     selectedCampaign,
     canEdit,
+    editBlockedReason,
     gridCols,
     fixes,
   };
