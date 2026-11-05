@@ -927,3 +927,31 @@ table.opt-table td.wknd { color: var(--muted); }
   margin: 18px auto 0;
   padding: 0 20px;
 }
+
+/* ---- product-level planning (use_planning_data) ---- */
+.opt-sourcepick { display: grid; gap: 6px; font-size: 13px; }
+.opt-sourcepick label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.opt-railnote a { color: var(--s1); text-decoration: underline; }
+.opt-dayprod { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.opt-subtle { font-size: 11px; color: var(--muted); }
+.opt-segs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.opt-segbtn {
+  border: 1px solid var(--line);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.opt-segbtn.on { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+.opt-scroll { max-height: 360px; overflow-y: auto; }
+table.opt-table th.num,
+table.opt-table td.num { text-align: right; }
+table.opt-table td.opt-empty { text-align: center; color: var(--muted); padding: 18px 8px; }
+.opt-chip.order-on_time { background: #e9f8e9; color: #076d07; }
+.opt-chip.order-late { background: var(--bad-bg); color: var(--bad); }
+.opt-chip.order-not_covered { background: var(--bad); color: #ffffff; }
+.opt-chip.order-after_horizon { background: var(--surface2); color: var(--ink2); }
+.opt-spark { display: block; overflow: visible; }
+.opt-spark-min { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 3 3; }
+.opt-spark-zero { stroke: var(--baseline); stroke-width: 1; }

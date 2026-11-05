@@ -9,6 +9,7 @@ import { LoadingNotice } from '@/features/optimize/components/LoadingNotice';
 import { OptimizeHeader } from '@/features/optimize/components/OptimizeHeader';
 import { PlanInputRail } from '@/features/optimize/components/PlanInputRail';
 import { PlanTooltip } from '@/features/optimize/components/PlanTooltip';
+import { PlanningKpiStrip, PlanningPanels } from '@/features/optimize/components/PlanningPanels';
 import { ProductionGantt } from '@/features/optimize/components/ProductionGantt';
 import { QuickScenarios } from '@/features/optimize/components/QuickScenarios';
 import { StageHeader } from '@/features/optimize/components/StageHeader';
@@ -34,7 +35,9 @@ export default function OptimizePage() {
           <main className="opt-stage">
             <StageHeader plan={plan} view={view} />
             <KpiStrip plan={plan} view={view} />
+            {view.planning && <PlanningKpiStrip planning={view.planning} />}
             <ProductionGantt plan={plan} data={data} view={view} />
+            <PlanningPanels view={view} grades={plan.grades} />
             <FulfillmentPanel view={view} />
             <ConstraintChecks plan={plan} view={view} />
             <DayByDayTable plan={plan} view={view} />

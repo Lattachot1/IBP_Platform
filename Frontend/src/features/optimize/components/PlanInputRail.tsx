@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { HORIZON_MIN, HORIZON_MAX, TIME_LIMIT_MIN, TIME_LIMIT_MAX, OBJECTIVES } from '../planForm';
 import { clamp } from '@/lib/format';
 import type { OptimizePlan } from '../useOptimizePlan';
@@ -129,28 +130,59 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
       </div>
 
       <div className="opt-panel">
-        <h2 className="opt-ph">Demand for the horizon (tons)</h2>
-        {grades.map((g) => (
-          <div className="opt-demandrow" key={g.id}>
-            <span className="opt-gcode">
-              <i
-                className="opt-dot"
-                style={{ background: `var(--s${g.slot})` }}
-              />
-              {g.disp}
-            </span>
+        <h2 className="opt-ph">Demand source</h2>
+        <div className="opt-sourcepick" role="radiogroup" aria-label="Demand source">
+          <label>
             <input
-              type="number"
-              min={0}
-              value={form.demand[g.id] ?? 0}
-              onChange={(e) => updateDemand(g.id, e.target.value)}
-              aria-label={`demand ${g.disp}`}
+              type="radio"
+              name="opt-source"
+              checked={!form.usePlanningData}
+              onChange={() => patch({ usePlanningData: false })}
             />
-          </div>
-        ))}
-        <p className="opt-railnote">
-          Tons to deliver within the horizon — the solver maximizes how much of this it can produce.
-        </p>
+            Tons per grade (below)
+          </label>
+          <label>
+            <input
+              type="radio"
+              name="opt-source"
+              checked={form.usePlanningData}
+              onChange={() => patch({ usePlanningData: true })}
+            />
+            Planning data — plan per product
+          </label>
+        </div>
+        {form.usePlanningData ? (
+          <p className="opt-railnote">
+            Orders, minimum stock and the monthly forecast come from the{' '}
+            <Link href="/planning-data">Planning Data</Link> page: stock, lots in QC
+            (5 days before output reaches stock), open sales orders and the forecast still to produce.
+            The plant rules stay on the product groups.
+          </p>
+        ) : (
+          <>
+            {grades.map((g) => (
+              <div className="opt-demandrow" key={g.id}>
+                <span className="opt-gcode">
+                  <i
+                    className="opt-dot"
+                    style={{ background: `var(--s${g.slot})` }}
+                  />
+                  {g.disp}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  value={form.demand[g.id] ?? 0}
+                  onChange={(e) => updateDemand(g.id, e.target.value)}
+                  aria-label={`demand ${g.disp}`}
+                />
+              </div>
+            ))}
+            <p className="opt-railnote">
+              Tons to deliver within the horizon — the solver maximizes how much of this it can produce.
+            </p>
+          </>
+        )}
       </div>
 
       <div className="opt-panel">
