@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { DemandForecastPanel } from '../components/DemandForecastPanel';
 import { ModelPerformancePanel } from '../components/ModelPerformancePanel';
+import { ApiError, readJson } from '../lib/apiError';
 
 // Data Interfaces
 interface ScenarioResult {
@@ -49,22 +50,74 @@ interface ScenarioResult {
 }
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+const OFFLINE_MESSAGE = `cannot reach the backend at ${API_BASE_URL}`;
+
+// What-if inputs; every figure on the page is computed from them by the backend
+interface SimulationInputs {
+  scenario_name: string;
+  base_demand: number;
+  demand_change_pct: number;
+  enable_ot: boolean;
+  created_by: string;
+}
+
+const INITIAL_INPUTS: SimulationInputs = {
+  scenario_name: 'Demand Surge (+20%) Analysis',
+  base_demand: 10000,
+  demand_change_pct: 20,
+  enable_ot: false,
+  created_by: 'Sales & Operations Consensus',
+};
+
+// Preset definitions directly from Capstone Slide 15
+type PresetType = 'base' | 'surge' | 'ot';
+const PRESETS: Record<PresetType, { inputs: Omit<SimulationInputs, 'created_by'>; toast: string; toastType: 'info' | 'success' }> = {
+  base: {
+    inputs: { scenario_name: 'Base Plan (Normal Demand)', base_demand: 10000, demand_change_pct: 0, enable_ot: false },
+    toast: 'Loaded Preset: Base Plan (Normal Baseline)',
+    toastType: 'info',
+  },
+  surge: {
+    inputs: { scenario_name: 'Demand Surge (+20%) - Constrained', base_demand: 10000, demand_change_pct: 20, enable_ot: false },
+    toast: 'Loaded Preset: Demand Surge (+20%) - Bottleneck Detected!',
+    toastType: 'info',
+  },
+  ot: {
+    inputs: { scenario_name: 'Demand Surge (+20%) - With Overtime', base_demand: 10000, demand_change_pct: 20, enable_ot: true },
+    toast: 'Loaded Preset: Demand Surge (+20%) with Overtime Activated',
+    toastType: 'success',
+  },
+};
+
+// POST /api/simulate - the planning rules live only in the backend
+async function requestSimulation(inputs: SimulationInputs): Promise<ScenarioResult> {
+  const res = await fetch(`${API_BASE_URL}/api/simulate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(inputs),
+  });
+  return readJson<ScenarioResult>(res);
+}
 
 export default function IBPPlatformDashboard() {
   // Input State
-  const [scenarioName, setScenarioName] = useState<string>('Demand Surge (+20%) Analysis');
-  const [baseDemand, setBaseDemand] = useState<number>(10000);
-  const [demandChangePct, setDemandChangePct] = useState<number>(20);
-  const [enableOT, setEnableOT] = useState<boolean>(false);
-  const [createdBy, setCreatedBy] = useState<string>('Sales & Operations Consensus');
+  const [scenarioName, setScenarioName] = useState<string>(INITIAL_INPUTS.scenario_name);
+  const [baseDemand, setBaseDemand] = useState<number>(INITIAL_INPUTS.base_demand);
+  const [demandChangePct, setDemandChangePct] = useState<number>(INITIAL_INPUTS.demand_change_pct);
+  const [enableOT, setEnableOT] = useState<boolean>(INITIAL_INPUTS.enable_ot);
+  const [createdBy, setCreatedBy] = useState<string>(INITIAL_INPUTS.created_by);
 
   // Execution State
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
+  const [storageMode, setStorageMode] = useState<'database' | 'memory' | null>(null);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
 
-  // Simulation Result State (Default initialized to Demand Surge without OT)
+  // Simulation Result State. Starts as the illustrative Capstone case so the
+  // layout renders; resultLive stays false (and the page says so) until the
+  // backend has computed a result.
+  const [resultLive, setResultLive] = useState<boolean>(false);
   const [currentResult, setCurrentResult] = useState<ScenarioResult>({
     scenario_name: 'Demand Surge (+20%) - Constrained Bottleneck',
     base_demand: 10000,
@@ -87,6 +140,7 @@ export default function IBPPlatformDashboard() {
 
   // History / Audit Trail State
   const [history, setHistory] = useState<ScenarioResult[]>([]);
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState<boolean>(false);
 
   // Helper for notification toasts
@@ -95,55 +149,20 @@ export default function IBPPlatformDashboard() {
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Local fallback calculation when backend is not reached
-  const runLocalSimulation = useCallback((name: string, base: number, pct: number, ot: boolean, creator: string): ScenarioResult => {
-    const forecast = Math.round(base * (1 + pct / 100) * 100) / 100;
-    const lower = Math.round(forecast * 0.95 * 100) / 100;
-    const upper = Math.round(forecast * 1.05 * 100) / 100;
-    const capLimit = ot ? 12000 : 10500;
-    const extraCost = ot ? 120000 : 0;
-    const actual = Math.min(forecast, capLimit);
-    const shortage = Math.max(0, forecast - actual);
-    const serviceLevel = forecast > 0 ? Math.round((actual / forecast) * 10000) / 100 : 100;
-    const revenue = Math.round(actual * 1000);
+  // A failed backend call: say what failed and why, never substitute data
+  const reportFailure = (action: string, err: unknown) => {
+    const reachable = err instanceof ApiError;
+    setBackendOnline(reachable);
+    showToast(`${action} failed: ${reachable ? err.message : OFFLINE_MESSAGE}`, 'error');
+  };
 
-    let status = 'Feasible / Normal Capacity';
-    if (forecast > capLimit) {
-      status = `Capacity Overload Bottleneck (Shortage: ${shortage.toLocaleString()} units)`;
-    } else if (ot) {
-      status = 'Feasible (Overtime Shift Activated)';
-    }
-
-    return {
-      scenario_name: name,
-      base_demand: base,
-      demand_change_pct: pct,
-      forecast_demand: forecast,
-      lower_bound: lower,
-      upper_bound: upper,
-      capacity_limit: capLimit,
-      enable_ot: ot,
-      actual_produce: actual,
-      shortage_qty: shortage,
-      service_level_pct: serviceLevel,
-      revenue_thb: revenue,
-      extra_cost_thb: extraCost,
-      constraint_status: status,
-      model_name: 'Ensemble Baseline (ETS/ML)',
-      created_by: creator,
-      created_at: new Date().toISOString()
-    };
-  }, []);
-
-  // Check Backend Health
+  // Check Backend Health (and where saved scenarios end up)
   const checkBackendHealth = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/health`, { method: 'GET', credentials: 'omit' });
-      if (res.ok) {
-        setBackendOnline(true);
-      } else {
-        setBackendOnline(false);
-      }
+      const health = await readJson<{ storage?: 'database' | 'memory' }>(res);
+      setBackendOnline(true);
+      setStorageMode(health.storage ?? null);
     } catch {
       setBackendOnline(false);
     }
@@ -153,78 +172,14 @@ export default function IBPPlatformDashboard() {
   const fetchScenarios = useCallback(async () => {
     setIsLoadingHistory(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/scenarios`);
-      if (res.ok) {
-        const data: ScenarioResult[] = await res.json();
-        setHistory(data);
-        setBackendOnline(true);
-      } else {
-        throw new Error('Backend responded with error');
-      }
-    } catch {
-      // Fallback initial benchmark data
-      setHistory([
-        {
-          scenario_id: 1,
-          scenario_name: 'Base Plan (Normal Baseline)',
-          base_demand: 10000,
-          demand_change_pct: 0,
-          forecast_demand: 10000,
-          lower_bound: 9500,
-          upper_bound: 10500,
-          capacity_limit: 10500,
-          enable_ot: false,
-          actual_produce: 10000,
-          shortage_qty: 0,
-          service_level_pct: 100,
-          revenue_thb: 10000000,
-          extra_cost_thb: 0,
-          constraint_status: 'Feasible / Normal Capacity',
-          model_name: 'Ensemble Baseline (ETS/ML)',
-          created_by: 'Supply Chain Lead',
-          created_at: new Date(Date.now() - 7200000).toISOString()
-        },
-        {
-          scenario_id: 2,
-          scenario_name: 'Demand Surge (+20%) - Constrained Bottleneck',
-          base_demand: 10000,
-          demand_change_pct: 20,
-          forecast_demand: 12000,
-          lower_bound: 11400,
-          upper_bound: 12600,
-          capacity_limit: 10500,
-          enable_ot: false,
-          actual_produce: 10500,
-          shortage_qty: 1500,
-          service_level_pct: 87.5,
-          revenue_thb: 10500000,
-          extra_cost_thb: 0,
-          constraint_status: 'Capacity Overload Bottleneck (Shortage: 1,500 units)',
-          model_name: 'Ensemble Baseline (ETS/ML)',
-          created_by: 'Sales & Commercial',
-          created_at: new Date(Date.now() - 3600000).toISOString()
-        },
-        {
-          scenario_id: 3,
-          scenario_name: 'Demand Surge (+20%) - With Overtime Lever',
-          base_demand: 10000,
-          demand_change_pct: 20,
-          forecast_demand: 12000,
-          lower_bound: 11400,
-          upper_bound: 12600,
-          capacity_limit: 12000,
-          enable_ot: true,
-          actual_produce: 12000,
-          shortage_qty: 0,
-          service_level_pct: 100,
-          revenue_thb: 12000000,
-          extra_cost_thb: 120000,
-          constraint_status: 'Feasible (Overtime Shift Activated)',
-          model_name: 'Ensemble Baseline (ETS/ML)',
-          created_by: 'Executive Committee',
-          created_at: new Date(Date.now() - 900000).toISOString()
-        }
-      ]);
+      const data = await readJson<ScenarioResult[]>(await fetch(`${API_BASE_URL}/api/scenarios`));
+      setHistory(data);
+      setHistoryError(null);
+      setBackendOnline(true);
+    } catch (err) {
+      setHistory([]);
+      setHistoryError(err instanceof ApiError ? err.message : OFFLINE_MESSAGE);
+      if (!(err instanceof ApiError)) setBackendOnline(false);
     } finally {
       setIsLoadingHistory(false);
     }
@@ -233,119 +188,86 @@ export default function IBPPlatformDashboard() {
   useEffect(() => {
     checkBackendHealth();
     fetchScenarios();
+    // Replace the illustrative starting case with the backend's own result
+    requestSimulation(INITIAL_INPUTS)
+      .then((result) => {
+        setCurrentResult(result);
+        setResultLive(true);
+      })
+      .catch(() => {
+        // the "not a live result" banner already tells the planner
+      });
   }, [checkBackendHealth, fetchScenarios]);
 
-  // Run What-If Simulation
-  const handleRunSimulation = async () => {
+  // Run a simulation on the backend and show its result
+  const simulate = async (inputs: SimulationInputs, successToast: string, toastType: 'info' | 'success' = 'success') => {
     setIsSimulating(true);
     try {
-      const payload = {
-        scenario_name: scenarioName,
-        base_demand: Number(baseDemand),
-        demand_change_pct: Number(demandChangePct),
-        enable_ot: enableOT,
-        created_by: createdBy
-      };
-
-      let result: ScenarioResult;
-
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/simulate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-
-        if (res.ok) {
-          result = await res.json();
-          setBackendOnline(true);
-          showToast('Simulation calculated successfully via Backend Engine!', 'success');
-        } else {
-          throw new Error('Backend failed');
-        }
-      } catch {
-        // Run local fallback calculation
-        result = runLocalSimulation(scenarioName, Number(baseDemand), Number(demandChangePct), enableOT, createdBy);
-        setBackendOnline(false);
-        showToast('Calculated using local simulation engine (Backend offline)', 'info');
-      }
-
+      const result = await requestSimulation(inputs);
       setCurrentResult(result);
+      setResultLive(true);
+      setBackendOnline(true);
+      showToast(successToast, toastType);
     } catch (err) {
-      showToast(`Simulation error: ${String(err)}`, 'error');
+      reportFailure('Simulation', err);
     } finally {
       setIsSimulating(false);
     }
   };
 
-  // Save Scenario to Audit Trail
+  // Run What-If Simulation
+  const handleRunSimulation = () =>
+    simulate(
+      {
+        scenario_name: scenarioName,
+        base_demand: Number(baseDemand),
+        demand_change_pct: Number(demandChangePct),
+        enable_ot: enableOT,
+        created_by: createdBy,
+      },
+      'Simulation calculated successfully via Backend Engine!',
+    );
+
+  // Save Scenario to Audit Trail. Only the inputs are sent: the backend
+  // recomputes every figure before storing it.
   const handleSaveScenario = async () => {
     setIsSaving(true);
     try {
-      const scenarioToSave: ScenarioResult = {
-        ...currentResult,
-        scenario_name: scenarioName || 'What-If Plan',
-        created_by: createdBy || 'Planner',
-        created_at: new Date().toISOString()
-      };
-
-      try {
-        const res = await fetch(`${API_BASE_URL}/api/scenarios/save`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(scenarioToSave)
-        });
-
-        if (res.ok) {
-          const saved = await res.json();
-          setHistory(prev => [saved, ...prev]);
-          showToast(`Scenario "${scenarioToSave.scenario_name}" saved to Database & Audit Trail!`, 'success');
-        } else {
-          throw new Error('Save API returned error');
-        }
-      } catch {
-        // Fallback save in local state
-        const localSaved: ScenarioResult = {
-          ...scenarioToSave,
-          scenario_id: Date.now()
-        };
-        setHistory(prev => [localSaved, ...prev]);
-        showToast(`Saved to in-browser audit trail (Backend offline)`, 'info');
+      const res = await fetch(`${API_BASE_URL}/api/scenarios/save`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scenario_name: scenarioName || 'What-If Plan',
+          base_demand: currentResult.base_demand,
+          demand_change_pct: currentResult.demand_change_pct,
+          enable_ot: currentResult.enable_ot,
+          created_by: createdBy || 'Planner',
+        }),
+      });
+      const saved = await readJson<ScenarioResult>(res);
+      setHistory((prev) => [saved, ...prev]);
+      setHistoryError(null);
+      setBackendOnline(true);
+      if (storageMode === 'memory') {
+        showToast(`Scenario "${saved.scenario_name}" saved in backend memory only (no database configured: lost when the backend restarts)`, 'info');
+      } else {
+        showToast(`Scenario "${saved.scenario_name}" saved to ${storageMode === 'database' ? 'Database & ' : ''}Audit Trail!`, 'success');
       }
     } catch (err) {
-      showToast(`Save error: ${String(err)}`, 'error');
+      reportFailure('Save', err);
     } finally {
       setIsSaving(false);
     }
   };
 
   // Preset Handlers directly from Capstone Slide 15
-  const applyPreset = (presetType: 'base' | 'surge' | 'ot') => {
-    if (presetType === 'base') {
-      setScenarioName('Base Plan (Normal Demand)');
-      setBaseDemand(10000);
-      setDemandChangePct(0);
-      setEnableOT(false);
-      const res = runLocalSimulation('Base Plan (Normal Demand)', 10000, 0, false, createdBy);
-      setCurrentResult(res);
-      showToast('Loaded Preset: Base Plan (Normal Baseline)', 'info');
-    } else if (presetType === 'surge') {
-      setScenarioName('Demand Surge (+20%) - Constrained');
-      setBaseDemand(10000);
-      setDemandChangePct(20);
-      setEnableOT(false);
-      const res = runLocalSimulation('Demand Surge (+20%) - Constrained', 10000, 20, false, createdBy);
-      setCurrentResult(res);
-      showToast('Loaded Preset: Demand Surge (+20%) - Bottleneck Detected!', 'info');
-    } else if (presetType === 'ot') {
-      setScenarioName('Demand Surge (+20%) - With Overtime');
-      setBaseDemand(10000);
-      setDemandChangePct(20);
-      setEnableOT(true);
-      const res = runLocalSimulation('Demand Surge (+20%) - With Overtime', 10000, 20, true, createdBy);
-      setCurrentResult(res);
-      showToast('Loaded Preset: Demand Surge (+20%) with Overtime Activated', 'success');
-    }
+  const applyPreset = (presetType: PresetType) => {
+    const { inputs, toast, toastType } = PRESETS[presetType];
+    setScenarioName(inputs.scenario_name);
+    setBaseDemand(inputs.base_demand);
+    setDemandChangePct(inputs.demand_change_pct);
+    setEnableOT(inputs.enable_ot);
+    simulate({ ...inputs, created_by: createdBy }, toast, toastType);
   };
 
   // Load a scenario from the table back into the editor
@@ -356,6 +278,7 @@ export default function IBPPlatformDashboard() {
     setEnableOT(s.enable_ot);
     if (s.created_by) setCreatedBy(s.created_by);
     setCurrentResult(s);
+    setResultLive(true);
     showToast(`Loaded "${s.scenario_name}" into simulator`, 'info');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -437,7 +360,7 @@ export default function IBPPlatformDashboard() {
                   {backendOnline === true
                     ? 'Backend Live (Port 8080)'
                     : backendOnline === false
-                    ? 'Direct Simulator (Standalone)'
+                    ? 'Backend Offline'
                     : 'Connecting Engine...'}
                 </span>
               </div>
@@ -507,6 +430,7 @@ export default function IBPPlatformDashboard() {
                     value={scenarioName}
                     onChange={(e) => setScenarioName(e.target.value)}
                     placeholder="e.g. Q4 Peak Surge with Weekend Shift"
+                    maxLength={100}
                     className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50"
                   />
                 </div>
@@ -603,6 +527,7 @@ export default function IBPPlatformDashboard() {
                     type="text"
                     value={createdBy}
                     onChange={(e) => setCreatedBy(e.target.value)}
+                    maxLength={50}
                     className="w-full px-3.5 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-slate-50/50"
                   />
                 </div>
@@ -631,9 +556,9 @@ export default function IBPPlatformDashboard() {
 
               <button
                 onClick={handleSaveScenario}
-                disabled={isSaving}
+                disabled={isSaving || !resultLive}
                 className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 active:bg-slate-300 transition-colors disabled:opacity-50"
-                title="Save Scenario into Database Audit Trail"
+                title={resultLive ? 'Save Scenario into Database Audit Trail' : 'Run a simulation on the backend first'}
               >
                 <Save className="w-4 h-4 text-slate-600" />
                 <span>Save</span>
@@ -643,6 +568,18 @@ export default function IBPPlatformDashboard() {
 
           {/* Right Side: KPI Cards & Constraint Alert Banner */}
           <div className="lg:col-span-7 space-y-6">
+            {/* Not-live notice: the figures below were not computed by the backend */}
+            {!resultLive && (
+              <div className="rounded-xl px-4 py-3 border border-amber-300 bg-amber-50 text-amber-900 text-xs flex items-start gap-2">
+                <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                <span>
+                  {backendOnline === false
+                    ? `Backend offline (${API_BASE_URL}): the figures below are the illustrative starting case, not a live result. Start the backend to run or save simulations.`
+                    : 'Connecting to the simulation engine: the figures below are the illustrative starting case until it answers.'}
+                </span>
+              </div>
+            )}
+
             {/* Status Alert Banner */}
             <div
               className={`rounded-2xl p-5 border shadow-sm transition-all ${
@@ -944,7 +881,13 @@ export default function IBPPlatformDashboard() {
                 </h2>
               </div>
               <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-                Version-controlled scenario records (MS SQL Server / In-Memory Store)
+                Version-controlled scenario records (
+                {storageMode === 'database'
+                  ? 'MS SQL Server'
+                  : storageMode === 'memory'
+                  ? 'in-memory store: no database configured, cleared when the backend restarts'
+                  : 'MS SQL Server / In-Memory Store'}
+                )
               </p>
             </div>
 
@@ -975,7 +918,13 @@ export default function IBPPlatformDashboard() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {history.length === 0 ? (
+                {historyError ? (
+                  <tr>
+                    <td colSpan={10} className="py-8 text-center text-rose-600">
+                      Could not load the audit trail: {historyError}. Use &quot;Refresh History&quot; to try again.
+                    </td>
+                  </tr>
+                ) : history.length === 0 ? (
                   <tr>
                     <td colSpan={10} className="py-8 text-center text-slate-400">
                       No saved scenarios found. Run a simulation and click &quot;Save Scenario&quot;.

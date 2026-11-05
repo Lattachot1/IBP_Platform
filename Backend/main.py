@@ -6,7 +6,8 @@ Prepared for UBE Chemicals (Asia) PCL
 Tenet: "One Platform, One Data, One Plan"
 
 Unified backend: this single service carries the constraint/simulation
-engine, the scenario audit trail (MS SQL with in-memory fallback) and the
+engine, the scenario audit trail (MS SQL; in-memory when no database is
+configured) and the
 in-process forecasting engine that used to live in the standalone Go
 backend and model-service. Endpoint paths, payloads and response shapes
 are unchanged, so the existing Next.js dashboard works as-is.
@@ -18,9 +19,12 @@ import threading
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 import database
 from forecasting import MODEL_NAME, generate_forecast, go_round, round2
@@ -68,11 +72,18 @@ class Scenario(BaseModel):
 
 
 class SimulateRequest(BaseModel):
-    scenario_name: str = ""
-    base_demand: float = 0.0
-    demand_change_pct: float = 0.0
+    """What-if inputs. Also the body of /api/scenarios/save: any result
+    fields a client sends along are ignored and recomputed.
+
+    String limits mirror dbo.Scenarios (NVARCHAR(100) / NVARCHAR(50)); the
+    number ranges are sanity bounds well outside what the dashboard offers.
+    """
+
+    scenario_name: str = Field(default="", max_length=100)
+    base_demand: float = Field(default=10000.0, gt=0, le=1_000_000, allow_inf_nan=False)
+    demand_change_pct: float = Field(default=0.0, ge=-100, le=500, allow_inf_nan=False)
     enable_ot: bool = False
-    created_by: str = ""
+    created_by: str = Field(default="", max_length=50)
 
 
 # ----------------------------------------------------------------------------
@@ -188,6 +199,24 @@ app.add_middleware(
 )
 
 
+def _json_safe(value):
+    """NaN/Infinity -> strings, recursively (JSON has no such numbers)."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {key: _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return value
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    """FastAPI's default 422, except that the echoed input may hold NaN or
+    Infinity, which JSON cannot encode - that would turn the 422 into a 500."""
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(_json_safe(exc.errors()))})
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     global forecast_engine
@@ -197,8 +226,9 @@ def on_startup() -> None:
     log.info(" Tenet: 'One Platform, One Data, One Plan'")
     log.info(" Backend Server listening (unified Python engine)")
     log.info("==================================================")
-    # Mirrors the legacy Go connectDatabase(): never crashes the service,
-    # falls back to in-memory mode on any problem.
+    # No database configured -> in-memory mode. A configured one stays in
+    # use even if it is down right now (requests answer 503 until it is
+    # back); a broken configuration stops the startup here.
     database.connect_database()
 
     # Train the real demand-forecasting engine from the billing data.
@@ -220,7 +250,7 @@ def on_startup() -> None:
 @app.get("/api/health")
 def handle_health():
     db_status = "In-Memory Mode (Active)"
-    if database.is_connected():
+    if database.is_configured():
         try:
             database.ping()
             db_status = "Connected (MS SQL Server 2022)"
@@ -233,6 +263,8 @@ def handle_health():
         "version": "1.0.0",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "database": db_status,
+        # Where saved scenarios go: "memory" is lost when the backend restarts
+        "storage": "database" if database.is_configured() else "memory",
         "model_service": "Connected (in-process forecasting engine)",
         "forecast_engine": _engine_status(),
         "planning_rules": {
@@ -255,15 +287,11 @@ def _reject_non_finite(values: dict) -> None:
             )
 
 
-@app.post("/api/simulate", response_model=Scenario)
-def handle_simulate(req: SimulateRequest) -> Scenario:
-    """Run a What-if constraint simulation (legacy Go handleSimulate)."""
-    _reject_non_finite({
-        "base_demand": req.base_demand,
-        "demand_change_pct": req.demand_change_pct,
-    })
+def run_simulation(req: SimulateRequest) -> Scenario:
+    """The What-if constraint engine (legacy Go handleSimulate) - the only
+    place the capacity / overtime / revenue rules are applied."""
     scenario_name = req.scenario_name if req.scenario_name else "What-If Simulation"
-    base_demand = req.base_demand if req.base_demand > 0 else 10000.0
+    base_demand = req.base_demand
     created_by = req.created_by if req.created_by else "Planner (Interactive)"
 
     # 1. Get demand forecast with confidence bands (in-process engine)
@@ -324,67 +352,53 @@ def handle_simulate(req: SimulateRequest) -> Scenario:
     )
 
 
+@app.post("/api/simulate", response_model=Scenario)
+def handle_simulate(req: SimulateRequest) -> Scenario:
+    """Run a What-if constraint simulation."""
+    return run_simulation(req)
+
+
 @app.post("/api/scenarios/save", response_model=Scenario, status_code=201)
-def handle_save_scenario(sc: Scenario) -> Scenario:
-    """Store a scenario to MS SQL or the in-memory store (legacy handleSaveScenario)."""
-    _reject_non_finite({
-        "base_demand": sc.base_demand,
-        "demand_change_pct": sc.demand_change_pct,
-        "forecast_demand": sc.forecast_demand,
-        "lower_bound": sc.lower_bound,
-        "upper_bound": sc.upper_bound,
-        "capacity_limit": sc.capacity_limit,
-        "actual_produce": sc.actual_produce,
-        "shortage_qty": sc.shortage_qty,
-        "service_level_pct": sc.service_level_pct,
-        "revenue_thb": sc.revenue_thb,
-        "extra_cost_thb": sc.extra_cost_thb,
-    })
-    if not sc.scenario_name:
-        sc.scenario_name = "Custom Scenario"
-    if not sc.created_by:
-        sc.created_by = "Planner"
-    if sc.created_at is None:
-        sc.created_at = datetime.now(timezone.utc)
+def handle_save_scenario(req: SimulateRequest) -> Scenario:
+    """Recompute a scenario from its inputs and store it.
 
-    # Try saving to MS SQL if connected
-    if database.is_connected():
+    The stored figures always come from run_simulation(), never from the
+    client. With a database configured a failed insert is a 503 - the
+    scenario is NOT parked in memory, where it would vanish on restart.
+    """
+    sc = run_simulation(req)
+    if database.is_configured():
         try:
-            inserted_id, inserted_at = database.insert_scenario(sc.model_dump())
-            sc.scenario_id = inserted_id
-            sc.created_at = inserted_at
-            return sc
-        except Exception as exc:
-            log.warning("[Database Warning] Insert to MS SQL failed: %s. Saving to In-Memory store instead.", exc)
-
-    # In-memory fallback persistence
+            sc.scenario_id, sc.created_at = database.insert_scenario(sc.model_dump())
+        except Exception:
+            log.exception("[Database] Insert into dbo.Scenarios failed")
+            raise HTTPException(status_code=503, detail="Database unavailable: scenario NOT saved")
+        return sc
     return store.save(sc)
 
 
 @app.get("/api/scenarios", response_model=List[Scenario])
 def handle_get_scenarios() -> List[Scenario]:
-    """Retrieve the 10 most recent scenarios (legacy handleGetScenarios)."""
-    # Try reading from MS SQL DB
-    if database.is_connected():
-        try:
-            rows = database.fetch_top_scenarios(10)
-        except Exception as exc:
-            log.info("[Database Note] Query failed (%s), returning In-Memory scenarios.", exc)
-            rows = []
+    """Retrieve the 10 most recent scenarios."""
+    if not database.is_configured():
+        return store.recent(10)
 
-        if rows:
-            scenarios: List[Scenario] = []
-            for row in rows:
-                # Enrich bounds for UI display (legacy read-path behavior:
-                # the DB schema does not persist these columns yet)
-                row["lower_bound"] = round2(row["forecast_demand"] * 0.95)
-                row["upper_bound"] = round2(row["forecast_demand"] * 1.05)
-                row["model_name"] = MODEL_NAME
-                scenarios.append(Scenario(**row))
-            return scenarios
+    try:
+        rows = database.fetch_top_scenarios(10)
+    except Exception:
+        log.exception("[Database] Query on dbo.Scenarios failed")
+        raise HTTPException(status_code=503, detail="Database unavailable: could not load scenarios")
 
-    # Return in-memory scenarios, sorted newest first
-    return store.recent(10)
+    scenarios: List[Scenario] = []
+    for row in rows:
+        # The DB does not persist these columns: the legacy engine's band is
+        # a fixed +-5% of the forecast and its model name never changes, so
+        # recomputing them gives back exactly what was shown when saved.
+        row["lower_bound"] = round2(row["forecast_demand"] * 0.95)
+        row["upper_bound"] = round2(row["forecast_demand"] * 1.05)
+        row["model_name"] = MODEL_NAME
+        scenarios.append(Scenario(**row))
+    return scenarios
 
 
 # ----------------------------------------------------------------------------

@@ -1,15 +1,19 @@
 """
 AI-Driven Integrated Business Planning (IBP) Platform
-MS SQL Server access layer (pymssql) with graceful in-memory fallback
+MS SQL Server access layer (pymssql)
 
 Prepared for UBE Chemicals (Asia) PCL
 
-Connection behavior mirrors the legacy Go backend:
 - Reads DATABASE_URL (sqlserver://user:pass@host:port?database=DB) or
   individual MSSQL_* environment variables.
-- If no configuration or the driver/connection is unavailable, the app
-  runs in in-memory fallback mode instead of failing.
-- Auto-creates dbo.Scenarios with the same idempotent T-SQL guard.
+- No configuration -> the app runs in in-memory mode (local development).
+- A configured database is the only store: if it is down, the calls below
+  raise and the API answers 503 - nothing is silently kept in memory.
+  Every call opens a fresh connection, so service resumes on its own once
+  the database is back.
+- A broken configuration (bad DSN, pymssql missing) fails the startup.
+- Ensures dbo.Scenarios exists (idempotent T-SQL guard) on the first
+  successful connection.
 """
 
 import logging
@@ -64,9 +68,8 @@ ORDER BY CreatedAt DESC;
 """
 
 _state_lock = threading.Lock()
-_conn_params: Optional[dict] = None
-_driver_available: bool = False
-_connected: bool = False
+_conn_params: Optional[dict] = None   # set when a database is configured
+_schema_ready: bool = False
 
 
 def _connection_params() -> Optional[dict]:
@@ -120,56 +123,53 @@ def _connection_params() -> Optional[dict]:
 
 
 def connect_database() -> None:
-    """Attempt to connect to MS SQL Server; never raises.
+    """Configure the database from the environment and try it once.
 
-    On any failure the app keeps running in in-memory mode, exactly like
-    the legacy Go connectDatabase() goroutine.
+    Raises RuntimeError on a broken configuration. An unreachable database
+    is only logged: the app stays in database mode and answers 503 until
+    the database comes up (e.g. a container still starting).
     """
-    global _conn_params, _driver_available, _connected
+    global _conn_params
 
     with _state_lock:
         try:
             params = _connection_params()
         except Exception as exc:
-            # Legacy Go contract: a broken configuration must never take the
-            # service down - log and keep serving from the in-memory store.
-            log.warning("[Database WARNING] Invalid database configuration: %s. Falling back to IN-MEMORY mode.", exc)
-            return
+            raise RuntimeError("Invalid database configuration (DATABASE_URL / MSSQL_*): %s" % exc) from exc
         if params is None:
-            log.warning("[Database] DATABASE_URL is not set. Operating in IN-MEMORY fallback mode.")
+            log.warning("[Database] DATABASE_URL is not set. Operating in IN-MEMORY mode "
+                        "(saved scenarios are lost on restart).")
             return
 
         try:
-            import pymssql  # optional dependency; in-memory mode works without it
-        except ImportError:
-            log.warning("[Database] pymssql is not installed. Operating in IN-MEMORY fallback mode.")
-            return
+            import pymssql  # noqa: F401 - optional dependency; in-memory mode works without it
+        except ImportError as exc:
+            raise RuntimeError("A database is configured but pymssql is not installed") from exc
 
-        log.info(
-            "[Database] Connecting to MS SQL Server at %s:%s ...",
-            params["server"], params["port"],
-        )
         _conn_params = params
-        _driver_available = True
 
+    log.info("[Database] Connecting to MS SQL Server at %s:%s ...", params["server"], params["port"])
+    try:
+        conn = _new_connection()
         try:
-            conn = _new_connection()
-        except Exception as exc:
-            log.warning("[Database WARNING] Connection failed: %s. Falling back to IN-MEMORY mode.", exc)
-            _conn_params = None
-            _driver_available = False
-            return
-
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute(SCHEMA_SQL)
-            conn.commit()
-            _connected = True
-            log.info("[Database] MS SQL Server connected and dbo.Scenarios table verified successfully.")
-        except Exception as exc:
-            log.warning("[Database WARNING] Could not verify/create table: %s", exc)
+            _ensure_schema(conn)
         finally:
             conn.close()
+        log.info("[Database] MS SQL Server connected and dbo.Scenarios table verified successfully.")
+    except Exception as exc:
+        log.warning("[Database WARNING] %s:%s is not answering yet (%s). Staying in database mode: "
+                    "scenario requests return 503 until it is reachable.", params["server"], params["port"], exc)
+
+
+def _ensure_schema(conn) -> None:
+    """Create dbo.Scenarios if missing - once per process."""
+    global _schema_ready
+    if _schema_ready:
+        return
+    with conn.cursor() as cursor:
+        cursor.execute(SCHEMA_SQL)
+    conn.commit()
+    _schema_ready = True
 
 
 def _new_connection():
@@ -186,14 +186,14 @@ def _new_connection():
     )
 
 
-def is_connected() -> bool:
-    """True when a live DB connection was established at startup."""
-    return _connected
+def is_configured() -> bool:
+    """True when a database is configured (database mode), reachable or not."""
+    return _conn_params is not None
 
 
 def ping() -> None:
     """Raise if the database cannot answer a trivial query right now."""
-    if not (_driver_available and _conn_params):
+    if _conn_params is None:
         raise RuntimeError("Database not configured (in-memory mode)")
     conn = _new_connection()
     try:
@@ -207,10 +207,11 @@ def ping() -> None:
 def insert_scenario(values: dict) -> tuple:
     """Insert one scenario row; returns (scenario_id, created_at).
 
-    Raises on any database error so the caller can fall back to memory.
+    Raises on any database error (the API turns it into a 503).
     """
     conn = _new_connection()
     try:
+        _ensure_schema(conn)
         with conn.cursor() as cursor:
             cursor.execute(_INSERT_SQL, (
                 values["scenario_name"], values["base_demand"], values["demand_change_pct"],
@@ -233,10 +234,11 @@ def insert_scenario(values: dict) -> tuple:
 def fetch_top_scenarios(limit: int = 10) -> list:
     """Fetch the most recent scenarios; returns a list of row dicts.
 
-    Raises on any database error so the caller can fall back to memory.
+    Raises on any database error (the API turns it into a 503).
     """
     conn = _new_connection()
     try:
+        _ensure_schema(conn)
         rows: list = []
         with conn.cursor(as_dict=True) as cursor:
             cursor.execute(_SELECT_TOP_SQL)
