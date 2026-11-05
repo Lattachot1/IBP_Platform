@@ -3,7 +3,7 @@
  * (GET /api/v1/models, /api/v1/forecast, /api/v1/history).
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
+import { getJson } from '@/lib/apiClient';
 
 export interface GradeModel {
   product_id: string;
@@ -55,14 +55,6 @@ export interface HistoryResponse {
   months: { period: string; tons: number }[];
   avg_tons: number;
   total_tons: number;
-}
-
-async function getJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`);
-  if (!res.ok) {
-    throw new Error(`API ${path} responded ${res.status}`);
-  }
-  return res.json() as Promise<T>;
 }
 
 export function fetchModels(): Promise<ModelsResponse> {

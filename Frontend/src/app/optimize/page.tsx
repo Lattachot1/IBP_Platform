@@ -8,9 +8,8 @@ import {
   SAMPLE_PLAN,
   dispOf,
   slotOf,
-  type OptimizeResult,
-  type PlanDay,
 } from './samplePlan';
+import type { OptimizeResult, PlanDay } from '@/features/optimize/types';
 import {
   CLEAN_DAYS,
   PAIRS,
@@ -32,9 +31,9 @@ import {
   type Draft,
   type Pair,
 } from './manualPlan';
+import { API_BASE_URL } from '@/lib/apiClient';
+import { clamp, formatNumber, signed } from '@/lib/format';
 import './optimize.css';
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8080';
 
 // Bounds mirror OptimizeRequest in Backend/optimization/schemas.py so the
 // page never sends a request the backend would reject with 422.
@@ -118,20 +117,6 @@ const BASE_FORM: PlanForm = {
   timeLimitS: 30,
   demand: { ...DEMAND_DEFAULT },
 };
-
-function clamp(n: number, lo: number, hi: number): number {
-  const v = Number.isFinite(n) ? Math.round(n) : lo;
-  return Math.min(hi, Math.max(lo, v));
-}
-
-function fmt(n: number): string {
-  return n.toLocaleString('en-US');
-}
-
-function signed(n: number, digits = 0): string {
-  const v = digits ? n.toFixed(digits) : fmt(Math.round(n));
-  return n > 0 ? `+${v}` : `${v}`;
-}
 
 function toIso(d: Date): string {
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -503,8 +488,8 @@ export default function OptimizePage() {
       lines.push(`${reactor.id} — today's status: ${STATUS_EN[reactor.status] ?? reactor.status}`);
     }
     d.parts.forEach((p) => {
-      let line = `${dispOf(p.grade, data?.grades)}: ${fmt(p.tons)} t`;
-      if (d.chg) line += ` (total ≤ ${fmt(d.cap ?? 0)})`;
+      let line = `${dispOf(p.grade, data?.grades)}: ${formatNumber(p.tons)} t`;
+      if (d.chg) line += ` (total ≤ ${formatNumber(d.cap ?? 0)})`;
       lines.push(line);
     });
     lines.push(`Reactor: ${d.rx}`);
@@ -527,11 +512,11 @@ export default function OptimizePage() {
         }}
       >
         {d.chg
-          ? `${dispOf(p.grade, data?.grades)}·${fmt(p.tons)}`
+          ? `${dispOf(p.grade, data?.grades)}·${formatNumber(p.tons)}`
           : (
             <>
               {dispOf(p.grade, data?.grades)}
-              <small>{fmt(p.tons)} t</small>
+              <small>{formatNumber(p.tons)} t</small>
             </>
           )}
       </div>
@@ -916,8 +901,8 @@ export default function OptimizePage() {
             <div className="opt-kpis">
               <div className="opt-tile">
                 <div className="opt-lab">Total production</div>
-                <div className="opt-val">{fmt(view.kpis.total_tons)} <small>t</small></div>
-                <div className="opt-foot">{view.horizon_days} days · avg {fmt(Math.round(view.kpis.total_tons / Math.max(1, view.horizon_days)))} t/day</div>
+                <div className="opt-val">{formatNumber(view.kpis.total_tons)} <small>t</small></div>
+                <div className="opt-foot">{view.horizon_days} days · avg {formatNumber(Math.round(view.kpis.total_tons / Math.max(1, view.horizon_days)))} t/day</div>
                 {kpiDelta('total_tons', true, ' t')}
               </div>
               <div className="opt-tile">
@@ -928,7 +913,7 @@ export default function OptimizePage() {
               </div>
               <div className="opt-tile">
                 <div className="opt-lab">Shortage</div>
-                <div className="opt-val">{fmt(view.kpis.shortage_tons)} <small>t</small></div>
+                <div className="opt-val">{formatNumber(view.kpis.shortage_tons)} <small>t</small></div>
                 <div className="opt-foot">Σ max(demand − produced, 0) over all grades</div>
                 {kpiDelta('shortage_tons', false, ' t')}
               </div>
@@ -1252,10 +1237,10 @@ export default function OptimizePage() {
                       />
                     </div>
                     <span className="opt-fmeta">
-                      {fmt(r.produced)} / {fmt(r.demand)} t ·{' '}
+                      {formatNumber(r.produced)} / {formatNumber(r.demand)} t ·{' '}
                       {r.shortage > 0
-                        ? <span className="opt-short">short {fmt(r.shortage)}</span>
-                        : `+${fmt(r.produced - r.demand)}`}
+                        ? <span className="opt-short">short {formatNumber(r.shortage)}</span>
+                        : `+${formatNumber(r.produced - r.demand)}`}
                     </span>
                   </div>
                 );
@@ -1295,9 +1280,9 @@ export default function OptimizePage() {
                           <td className="mono">
                             {d.parts
                               .map((p, k) => {
-                                let seg = `${dispOf(p.grade, grades)} ${fmt(p.tons)}`;
+                                let seg = `${dispOf(p.grade, grades)} ${formatNumber(p.tons)}`;
                                 if (d.chg && k === d.parts.length - 1 && d.parts.length > 1) {
-                                  seg += ` ≤ total ${fmt(d.cap ?? 0)}`;
+                                  seg += ` ≤ total ${formatNumber(d.cap ?? 0)}`;
                                 }
                                 return seg;
                               })

@@ -8,7 +8,7 @@
 // (POST /api/v1/optimize/evaluate) so plant_config.yaml stays the only
 // source of plant rules.
 
-import type { OptimizeResult } from './samplePlan';
+import type { OptimizeResult } from '@/features/optimize/types';
 
 export type Pair = 'RX1-2' | 'RX3-4';
 
