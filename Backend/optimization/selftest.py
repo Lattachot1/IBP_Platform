@@ -152,6 +152,23 @@ def validate(label, res, cfg, req):
         check("%s produced %s" % (label, row["grade"]), produced[row["grade"]] == row["produced"],
               "%d vs %d" % (produced[row["grade"]], row["produced"]))
 
+    # product split (use_planning_data): each group's output goes to its products
+    if "planning" in res:
+        group_of = {p["material_no"]: p["group"] for p in res["planning"]["products"]}
+        planned = set(group_of.values())
+        for i, d in enumerate(days):
+            per_group = {}
+            for item in d["products"]:
+                per_group[group_of[item["material_no"]]] = per_group.get(group_of[item["material_no"]], 0) + item["tons"]
+            for p in d["parts"]:
+                if p["grade"] in planned:
+                    check("%s product split d%d %s" % (label, i, p["grade"]),
+                          per_group.get(p["grade"], 0) == p["tons"], "%s vs %s" % (per_group.get(p["grade"]), p["tons"]))
+        for o in res["planning"]["orders"]:
+            if o["status"] == "on_time":
+                check("%s order %s ready by due" % (label, o["order_no"]),
+                      o["ready_date"] <= max(o["due_date"], res["start_date"]))
+
 
 def evaluate_roundtrip(label, res, req):
     """The editable-Gantt evaluator must accept every solver plan unchanged
@@ -213,6 +230,8 @@ SCENARIOS = {
     "S2 heavy VCR-412 demand": dict(horizon_days=28, demand={"VCR412": 4000}),
     "S3 horizon 14d": dict(horizon_days=14),
     "S4 heavy BR150L demand": dict(horizon_days=28, demand={"BR150L": 6000}),
+    # product-level plan on the planning data (in-memory mode: sample_data/mock)
+    "S5 planning data (mock)": dict(horizon_days=28, start_date="2026-11-09", use_planning_data=True),
 }
 
 

@@ -63,14 +63,22 @@ def handle_optimize(req: OptimizeRequest) -> dict:
 
     The request/response contract is final: the Phase 2 CP-SAT engine
     replaces optimization/engine.solve() without touching this endpoint
-    or the /optimize page. Deliberately independent of the forecast
-    engine and the database.
+    or the /optimize page. Independent of the forecast engine.
+
+    use_planning_data=true plans per product from the planning data
+    (stock, QC lots, open orders, monthly forecast; database or the mock
+    set in memory mode) instead of `demand`, and adds a `planning` section
+    plus `days[].products`. A configured database that is down -> 503.
     """
     _reject_non_finite({
         ("demand." + grade): value
         for grade, value in (req.demand or {}).items()
     })
-    return optimization_engine.solve(req.model_dump())
+    try:
+        return optimization_engine.solve(req.model_dump())
+    except products.StoreUnavailable:
+        log.exception("[Database] Planning data: optimize could not load its inputs")
+        raise HTTPException(status_code=503, detail="Database unavailable: could not load the planning data")
 
 
 @router.post("/api/v1/optimize/evaluate")

@@ -34,6 +34,7 @@ try:
 except ImportError:  # pyyaml missing → the sample fallback keeps the API alive
     yaml = None
 
+from optimization import planning
 from optimization.sample_plan import (
     ASSUMPTIONS,
     CHECKS,
@@ -241,6 +242,17 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     dates = [start + timedelta(days=i) for i in range(H)]
     blocked_days = [d.weekday() >= 5 or d.isoformat() in holidays for d in dates]
 
+    # Product-level planning: the requirement comes from stock, QC lots, open
+    # orders and the monthly forecast (optimization/planning.py), not from
+    # tons per grade. demand then holds each group's net requirement.
+    plan_inputs = None
+    if req.get("use_planning_data"):
+        qc_days = int((cfg.get("planning") or {}).get("qc_days", 5))
+        plan_inputs = planning.load_inputs(grades, start, H, qc_days)
+        demand = {g: 0 for g in grades}
+        for product in plan_inputs.products:
+            demand[product.group] += int(round(planning.net_requirement(product)))
+
     initial = req.get("initial") or {}
     g0 = gi.get(initial.get("grade") or grades[0], 0)
     remain = max(0, min(int(initial.get("remain_days") or 0), H))
@@ -401,11 +413,20 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         m.Add(age12[d] <= rx12_vcr_end_max).OnlyEnforceIf(vcr_end[d])
 
     # ---- objective ----------------------------------------------------------
-    demand_by_idx = [demand[g] for g in grades]
-    fulfill = [m.NewIntVar(0, demand_by_idx[g], f"ful_{g}") for g in range(G)]
-    for g in range(G):
-        m.Add(fulfill[g] <= sum(prod[d][g] for d in Hr))
-    m.Maximize(sum(fulfill) - penalty * sum(chg[d] for d in range(1, H)))
+    changeovers = sum(chg[d] for d in range(1, H))
+    plan_model = None
+    if plan_inputs is not None:
+        # orders on time >> minimum stock >> forecast >> changeovers >> output
+        plan_model = planning.attach(m, plan_inputs, prod, grades, caps)
+        m.Maximize(planning.W_OUTPUT * sum(prod[d][g] for d in Hr for g in range(G))
+                   - planning.objective_terms(plan_model)
+                   - planning.W_FORECAST * penalty * changeovers)
+    else:
+        demand_by_idx = [demand[g] for g in grades]
+        fulfill = [m.NewIntVar(0, demand_by_idx[g], f"ful_{g}") for g in range(G)]
+        for g in range(G):
+            m.Add(fulfill[g] <= sum(prod[d][g] for d in Hr))
+        m.Maximize(sum(fulfill) - penalty * changeovers)
 
     # ---- solve --------------------------------------------------------------
     solver = cp_model.CpSolver()
@@ -443,17 +464,25 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     age34_v = [val(age34[d]) for d in Hr]
 
     produced = {g: sum(val(prod[d][gi[g]]) for d in Hr) for g in grades}
+    plan_out = planning.report(plan_model, val, dates) if plan_model is not None else None
+    if plan_out is not None:
+        # shortage per product (one product's surplus cannot cover another)
+        by_product = plan_out["produced_by_product"]
+        shortage = {g: 0 for g in grades}
+        for product in plan_inputs.products:
+            need = int(round(planning.net_requirement(product)))
+            shortage[product.group] += max(0, need - by_product[product.material_no])
+    else:
+        shortage = {g: max(0, demand[g] - produced[g]) for g in grades}
     fulfillment = []
     for g in grades:
-        dem = demand[g]
-        prod_g = produced[g]
         fulfillment.append({
             "grade": g,
             "disp": _display(g),
             "slot": SLOT_ORDER.index(g) + 1 if g in SLOT_ORDER else G + 1,
-            "produced": prod_g,
-            "demand": dem,
-            "shortage": max(0, dem - prod_g),
+            "produced": produced[g],
+            "demand": demand[g],
+            "shortage": shortage[g],
         })
 
     def campaign_windows(flags):
@@ -523,6 +552,9 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
             "rx": "RX1-4" if vcr_v[d] else ("RX1-2" if run12_v[d] else "RX3-4"),
             "note": " · ".join(notes),
         })
+        if plan_out is not None:
+            days[-1]["products"] = [{"material_no": mat, "tons": tons}
+                                    for mat, tons in sorted(plan_out["alloc_by_day"][d].items())]
 
     def pair_note(cl_flags, age_vals):
         windows = campaign_windows(cl_flags)
@@ -570,6 +602,11 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         checks.append({"level": "ok", "text": "All grade switches fall on weekdays, none on holidays"})
     if assumed_used:
         checks.append({"level": "warn", "text": "Assumed −5 t losses applied to: %s" % ", ".join(sorted(assumed_used))})
+    if plan_out is not None:
+        planned_groups = {product.group for product in plan_inputs.products}
+        plan_out["planning"]["unallocated_tons"] = {
+            g: produced[g] for g in grades if g not in planned_groups and produced[g] > 0}
+        checks.extend(planning.checks(plan_out["planning"]))
     short_rows = [r for r in fulfillment if r["shortage"] > 0]
     if short_rows:
         checks.append({"level": "warn", "text": "Demand not fully met: "
@@ -579,7 +616,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
 
     total_tons = sum(produced.values())
     total_demand = sum(demand.values())
-    met = sum(min(produced[g], demand[g]) for g in grades)
+    met = sum(demand[g] - min(shortage[g], demand[g]) for g in grades)
     kpis = {
         "status": status_txt,
         "total_tons": total_tons,
@@ -589,7 +626,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         "solve_s": solve_s,
     }
 
-    return {
+    result = {
         "status": "feasible",
         "mode": "cspat",
         "solve_s": solve_s,
@@ -604,6 +641,9 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         "checks": checks,
         "assumptions": cfg.get("assumptions") or [],
     }
+    if plan_out is not None:
+        result["planning"] = plan_out["planning"]
+    return result
 
 
 def solve(req: dict) -> dict:

@@ -45,7 +45,7 @@ IBP_Platform/
 │   ├── sample_data/               # ข้อมูลสมมติ (mock) รูปแบบเดียวกับ export จาก SAP — ไม่ใช่ข้อมูลลูกค้า
 │   ├── database.py                # MS SQL Access Layer (pymssql) — DB ล่มตอบ 503 ไม่แอบเก็บใน RAM
 │   ├── forecasting/               # Demand forecasting engine (data, models, backtest, service)
-│   ├── optimization/              # Production Schedule Optimizer: engine.py (CP-SAT) + manual.py (rule check for hand-edited plans) + plant_config.yaml
+│   ├── optimization/              # Production Schedule Optimizer: engine.py (CP-SAT) + planning.py (product level) + manual.py (rule check for hand-edited plans) + plant_config.yaml
 │   └── tests/                     # pytest (API, database mode, forecast state, optimizer selftest, products)
 └── Frontend/
     ├── Dockerfile                 # Multi-stage Next.js standalone container
@@ -156,9 +156,14 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
 ### Python Backend (`:8080` — รวม Forecasting Engine ไว้ภายใน)
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
 - `POST /api/v1/optimize` — Production Schedule Optimization (CP-SAT engine อ่านกฎจาก `Backend/optimization/plant_config.yaml` — ถ้าไม่ได้ติดตั้ง ortools จะ fallback เป็น sample plan)
+  - `"use_planning_data": true` — วางแผนระดับ product จากข้อมูลวางแผน (สต็อก, lot รอ QC, order ที่ยังเปิด, forecast รายเดือน) แทน `demand` ราย grade (`Backend/optimization/planning.py`):
+    - กฎโรงงานทุกข้อยังอยู่ที่ product group; ผลผลิตรายวันของแต่ละ group ถูกแบ่งลง product ใน group
+    - ลำดับเป้าหมาย: order ส่งทันวัน (ตัน×วันที่ช้า) → สต็อกไม่ต่ำกว่าขั้นต่ำ → forecast ส่วนที่ยังไม่มี order ผลิตครบภายในสิ้นเดือน (หักสต็อกส่วนเกินราย product) → changeover น้อย → เผื่อสต็อกให้ demand หลังจบแผนตามสัดส่วนยอดขาย
+    - ของที่ผลิตเสร็จเข้าสต็อกได้หลัง QC `planning.qc_days` (5 วัน, ตั้งใน `plant_config.yaml`)
+    - response เพิ่ม `planning` (สถานะทุก order: วันพร้อมส่ง/ช้ากี่วัน, สต็อกคาดการณ์รายวันราย product, forecast ราย group-เดือน, KPI) และ `days[].products`
 - `POST /api/v1/optimize/evaluate` — ตรวจแผนที่แก้ด้วยมือ (campaign/cleaning/pair plan) กับกฎเดียวกันใน `plant_config.yaml` ตอบรูปแบบเดียวกับ solver พร้อม `checks` ระดับ `conflict` และเลขวันที่ผิดกฎ (`Backend/optimization/manual.py`)
 - หน้า `/optimize` — Production Optimization (Gantt แผนผลิตรายวัน, วงจร Reactor, Fulfillment, Constraint check) มี Quick scenarios, วันเริ่มแผน/วันหยุดบริษัท, และโหมด **Edit plan**: ลากยืด/หด campaign, ย้ายช่วงล้างเตา, สลับ/แทรก/ลบ campaign โดยแผนที่ optimize แสดงเป็น ghost และ backend ตรวจกฎทุกครั้ง (วันที่ผิดกฎขึ้นสีแดง) มี fallback ข้อมูลในเครื่องเมื่อ backend ไม่รัน
-- Self-test ของ optimizer: `cd Backend && python -m optimization.selftest` (ตรวจคำตอบ solver กับกฎทุกข้อ และตรวจว่า evaluator รับแผนของ solver โดยไม่มี conflict)
+- Self-test ของ optimizer: `cd Backend && python -m optimization.selftest` (ตรวจคำตอบ solver กับกฎทุกข้อ และตรวจว่า evaluator รับแผนของ solver โดยไม่มี conflict; S5 วางแผนระดับ product บน mock data)
 - `GET /api/v1/optimize/catalog` — product group จาก `plant_config.yaml` พร้อมสินค้าที่ active ในแต่ละ group (สินค้าที่ group ถูกลบไปแล้วอยู่ใน `unassigned`)
 - `GET /api/v1/products` (`?active=true|false`), `GET /api/v1/products/{material_no}`, `POST /api/v1/products`, `PATCH /api/v1/products/{material_no}` — ข้อมูลหลักสินค้า (SAP material) แต่ละตัวอยู่ใน group ของ `plant_config.yaml` และมีสต็อกขั้นต่ำ ไม่มีการลบ: เลิกขายใช้ `PATCH {"is_active": false}` ถ้าไม่ได้ตั้งค่า DB จะใช้สินค้าสมมติจาก `Backend/sample_data/mock/products.csv` (ยังไม่มี login: ใครเข้าถึง backend ได้ก็แก้ได้)
 - `POST /api/v1/imports/{stock|qc-lots|sales-orders|forecasts}` — import ไฟล์ CSV (ส่งไฟล์เป็น body, `Content-Type: text/csv`) รูปแบบตาม `Backend/sample_data/README.md`:
