@@ -11,6 +11,13 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
+
+@pytest.fixture(autouse=True)
+def no_engine_cache(tmp_path, monkeypatch):
+    """Keep tests away from the real engine cache - training and retrain
+    write it, and a stub leaking into it would poison the next startup."""
+    monkeypatch.setattr(forecast_api, "_cache_path", lambda: tmp_path / "engine.joblib")
+
 import database
 import main
 from api import forecast as forecast_api
@@ -156,7 +163,7 @@ def test_startup_training_publishes_in_database_mode(monkeypatch):
     calls = []
     monkeypatch.setattr(engine_forecast, "publish", lambda engine, **kw: calls.append(engine) or {
         "rows": 0, "first_month": None, "last_month": None})
-    forecast_api.train_at_startup()
+    forecast_api.train_at_startup(background=False)
     assert calls == [STUB_ENGINE]
 
 
@@ -165,5 +172,6 @@ def test_failed_startup_training_publishes_nothing(monkeypatch):
         raise FileNotFoundError("No billing CSV found")
 
     monkeypatch.setattr(service, "train_all", broken)
-    forecast_api.train_at_startup()
+    monkeypatch.setattr(forecast_api, "_training", {"state": "idle", "started_at": None, "error": None})
+    forecast_api.train_at_startup(background=False)
     assert engine_forecast.last_publish() == {"status": "never"}

@@ -117,7 +117,7 @@ export function DemandForecastPanel() {
         <div>
           <h2 className="text-base font-bold text-amber-900">AI Demand Forecast unavailable</h2>
           <p className="text-sm text-amber-800 mt-1">
-            Forecast engine unavailable (the backend may not be running, or there is no billing data) —
+            Forecast engine unavailable (the backend may not be running, the billing data is missing, or the forecast is still training) —
             the What-If Simulator above still works as usual
           </p>
         </div>
