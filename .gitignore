@@ -56,3 +56,6 @@ Thumbs.db
 *.swp
 *.swo
 docs/architecture-flow.html
+
+# forecast engine cache (fingerprint-keyed joblib dump)
+Backend/.forecast-cache/

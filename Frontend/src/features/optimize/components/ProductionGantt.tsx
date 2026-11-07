@@ -312,10 +312,13 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
           </div>
         </div>
       </div>
-      <p className="opt-gcap">
-        Plant row = plant-level grade for the day · RX1–RX4 rows = per-reactor status (producing / cleaning / standby) · two-tone block = changeover day (uses the special ceiling of that pair) · grey columns = Sat–Sun (production allowed, but no grade change)
-        {editing && ' · red outline = a plant rule is broken on that day (hover for the reason)'}
-      </p>
+      <details className="opt-details">
+        <summary>How to read this plan</summary>
+        <p className="opt-gcap">
+          Plant row = plant-level grade for the day · RX1–RX4 rows = per-reactor status (producing / cleaning / standby) · two-tone block = changeover day (uses the special ceiling of that pair) · grey columns = Sat–Sun (production allowed, but no grade change)
+          {editing && ' · red outline = a plant rule is broken on that day (hover for the reason)'}
+        </p>
+      </details>
     </section>
   );
 }

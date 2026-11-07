@@ -1,11 +1,18 @@
 """Demand forecasting API (real models trained from the billing data).
 
-Holds the trained engine: set once at startup by train_at_startup() and
-replaced by POST /api/v1/retrain; None means the forecast API answers 503.
+Holds the trained engine: loaded at startup from a fingerprint-keyed cache
+(when the billing data is unchanged) or trained in a background thread,
+and replaced by POST /api/v1/retrain. None means the forecast API answers
+503 while training runs or after a failure.
 """
 
+import hashlib
 import logging
 import math
+import os
+import threading
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -19,32 +26,131 @@ router = APIRouter(tags=["forecast"])
 
 # Trained demand-forecasting engine (None = unavailable)
 forecast_engine: Optional[dict] = None
+# Background training state: idle | training | failed (engine None + failed = why)
+_training = {"state": "idle", "started_at": None, "error": None}
+# Bump after any change to the training pipeline so old caches are dropped
+CACHE_VERSION = 1
 
 
-def train_at_startup() -> None:
-    """Train the real demand-forecasting engine from the billing data.
+def _cache_path() -> Path:
+    env = os.getenv("FORECAST_CACHE_PATH", "").strip()
+    if env:
+        return Path(env)
+    return Path(__file__).resolve().parents[1] / ".forecast-cache" / "engine.joblib"
 
-    Never fatal: if the data or the ML libraries are missing, the forecast
-    API reports unavailable and the What-if flow keeps working untouched.
+
+def _source_fingerprint() -> Optional[str]:
+    """sha256 of the billing extract - the cache key. None = no data file."""
+    from forecasting import data
+    try:
+        source = data.find_source_file()
+    except Exception:
+        return None
+    digest = hashlib.sha256()
+    with open(source, "rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _load_cached_engine() -> Optional[dict]:
+    """The cached engine when the billing data is byte-identical, else None."""
+    path = _cache_path()
+    if not path.exists():
+        return None
+    try:
+        import joblib
+        payload = joblib.load(path)
+        if payload.get("cache_version") != CACHE_VERSION:
+            log.info("[Forecast] cache is from an older pipeline - retraining")
+            return None
+        fingerprint = _source_fingerprint()
+        if fingerprint is None or payload.get("source_fingerprint") != fingerprint:
+            log.info("[Forecast] billing data changed since the cache - retraining")
+            return None
+        engine = payload["engine"]
+        engine["loaded_from_cache"] = True
+        log.info("[Forecast] engine loaded from cache (%d grades) - no retraining needed",
+                 len(engine["grades"]))
+        return engine
+    except Exception as exc:
+        log.warning("[Forecast WARNING] cache unusable (%s) - retraining", exc)
+        return None
+
+
+def _save_cached_engine(engine: dict) -> None:
+    """Persist the engine, keyed by the billing file's fingerprint (best effort)."""
+    try:
+        import joblib
+        fingerprint = _source_fingerprint()
+        if fingerprint is None:
+            return
+        path = _cache_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        joblib.dump(
+            {"cache_version": CACHE_VERSION, "source_fingerprint": fingerprint, "engine": engine},
+            path, compress=3,
+        )
+        log.info("[Forecast] engine cached at %s", path)
+    except Exception as exc:
+        log.warning("[Forecast WARNING] engine not cached: %s", exc)
+
+
+def train_at_startup(background: bool = True) -> None:
+    """Load the cached engine when the billing data is unchanged, else train.
+
+    Training runs in a background thread so the API starts serving right
+    away (health reports "training" meanwhile); background=False trains
+    inline, which is what the tests use. Never fatal: a failure leaves the
+    forecast API unavailable and every other flow working untouched.
     """
+    global forecast_engine
+    cached = _load_cached_engine()
+    if cached is not None:
+        forecast_engine = cached
+        _log_champions(cached, "loaded from cache")
+        return
+    if os.getenv("IBP_SKIP_TRAIN", "").strip().lower() in {"1", "true", "yes"}:
+        log.info("[Forecast] IBP_SKIP_TRAIN set - forecast stays unavailable until POST /api/v1/retrain")
+        return
+    if background:
+        _training.update(state="training", started_at=datetime.now(timezone.utc).isoformat(), error=None)
+        threading.Thread(target=_train_and_cache, name="forecast-training", daemon=True).start()
+    else:
+        _train_and_cache()
+
+
+def _train_and_cache() -> None:
     global forecast_engine
     try:
         from forecasting import service
-        forecast_engine = service.train_all()
-        log.info("[Forecast] Engine trained for %d grades:", len(forecast_engine["grades"]))
-        for grade, info in forecast_engine["grades"].items():
-            log.info("[Forecast]   %s -> %s (WAPE %.1f%%, MASE %.2f)",
-                     grade, info["champion"], info["wape"] * 100, info["mase"])
+        engine = service.train_all()
     except Exception as exc:
-        forecast_engine = None
+        _training.update(state="failed", error=str(exc))
         log.warning("[Forecast WARNING] Engine training skipped: %s", exc)
         return
+    forecast_engine = engine
+    _training.update(state="idle", started_at=None, error=None)
+    _log_champions(engine, "trained")
+    _save_cached_engine(engine)
     # the planner reads the monthly forecast from dbo.DemandForecasts
-    engine_forecast.publish_after_training(forecast_engine)
+    engine_forecast.publish_after_training(engine)
+
+
+def _log_champions(engine: dict, how: str) -> None:
+    log.info("[Forecast] Engine %s for %d grades:", how, len(engine["grades"]))
+    for grade, info in engine["grades"].items():
+        log.info("[Forecast]   %s -> %s (WAPE %.1f%%, MASE %.2f)",
+                 grade, info["champion"], info["wape"] * 100, info["mase"])
 
 
 def _require_engine() -> dict:
     if forecast_engine is None:
+        if _training["state"] == "training":
+            raise HTTPException(
+                status_code=503,
+                detail="Forecast engine is training in the background - try again in a few minutes",
+            )
         raise HTTPException(
             status_code=503,
             detail="Forecast engine unavailable (billing data or ML libraries missing)",
@@ -55,12 +161,19 @@ def _require_engine() -> dict:
 def engine_status() -> dict:
     """Engine summary for /api/health."""
     if forecast_engine is None:
+        if _training["state"] == "training":
+            return {"status": "training", "started_at": _training["started_at"]}
+        if _training["state"] == "failed":
+            return {"status": "unavailable", "last_error": _training.get("error")}
         return {"status": "unavailable"}
-    return {
+    status = {
         "status": "trained",
         "grades": sorted(forecast_engine["grades"]),
         "trained_at": forecast_engine["trained_at"],
     }
+    if forecast_engine.get("loaded_from_cache"):
+        status["loaded_from_cache"] = True
+    return status
 
 
 def _round_or_none(value, digits: int):
@@ -174,12 +287,15 @@ def handle_retrain():
     global forecast_engine
     from forecasting import service
     try:
-        forecast_engine = service.train_all()
+        engine = service.train_all()
     except Exception as exc:
         raise HTTPException(
             status_code=503,
             detail="Retrain failed, previous engine kept: %s" % exc,
         )
+    forecast_engine = engine
+    _training.update(state="idle", started_at=None, error=None)
+    _save_cached_engine(engine)
     engine_forecast.publish_after_training(forecast_engine)
     return {
         "status": "retrained",

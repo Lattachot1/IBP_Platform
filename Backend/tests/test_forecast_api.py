@@ -26,6 +26,20 @@ def no_engine(monkeypatch):
     monkeypatch.setattr(forecast, "forecast_engine", None)
 
 
+@pytest.fixture(autouse=True)
+def reset_training_state():
+    forecast._training.update(state="idle", started_at=None, error=None)
+    yield
+    forecast._training.update(state="idle", started_at=None, error=None)
+
+
+@pytest.fixture(autouse=True)
+def no_engine_cache(tmp_path, monkeypatch):
+    """Keep tests away from the real engine cache - training and retrain
+    write it, and a stub leaking into it would poison the next startup."""
+    monkeypatch.setattr(forecast, "_cache_path", lambda: tmp_path / "engine.joblib")
+
+
 def test_retrain_replaces_the_engine_and_health_reports_it(monkeypatch):
     monkeypatch.setattr(service, "train_all", lambda: STUB_ENGINE)
 
@@ -59,7 +73,7 @@ def test_startup_training_failure_leaves_the_api_unavailable(monkeypatch):
         raise FileNotFoundError("No billing CSV found")
 
     monkeypatch.setattr(service, "train_all", broken)
-    forecast.train_at_startup()
+    forecast.train_at_startup(background=False)
 
     assert forecast.forecast_engine is None
     assert client.get("/api/v1/models").status_code == 503

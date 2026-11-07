@@ -117,8 +117,8 @@ export function DemandForecastPanel() {
         <div>
           <h2 className="text-base font-bold text-amber-900">AI Demand Forecast unavailable</h2>
           <p className="text-sm text-amber-800 mt-1">
-            ไม่พบ Forecast Engine (Backend อาจยังไม่ได้รัน หรือไม่มีข้อมูล billing) —
-            What-If Simulator ด้านบนยังใช้งานได้ตามปกติ
+            Forecast engine unavailable (the backend may not be running, the billing data is missing, or the forecast is still training) —
+            the What-If Simulator above still works as usual
           </p>
         </div>
       </section>
@@ -137,8 +137,8 @@ export function DemandForecastPanel() {
             </span>
           </div>
           <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-            พยากรณ์ดีมานด์รายเดือน (ton) จากโมเดลจริงที่เทรนจากข้อมูล billing 89 เดือน ·
-            กรอบคือ 80% interval ที่ขยายตามระยะทาง
+            Monthly demand forecast (tons) from the real model trained on 89 months of billing data ·
+            the band is the 80% interval, widening with horizon
           </p>
         </div>
         {forecast && (
@@ -170,7 +170,7 @@ export function DemandForecastPanel() {
             <div className="flex justify-between items-center mb-1">
               <label className="text-xs font-semibold text-slate-600">Forecast Horizon</label>
               <span className="text-xs font-bold font-mono text-blue-700 bg-blue-50 px-2 py-0.5 rounded">
-                {horizon} เดือน
+                {horizon} mo ahead
               </span>
             </div>
             <input
@@ -291,8 +291,8 @@ export function DemandForecastPanel() {
               <div className="text-sm font-bold text-slate-900">{forecast.model_name}</div>
               <div className="text-[11px] text-slate-500 mt-1.5">
                 {isNaive
-                  ? 'ยังไม่มีโมเดลที่ชนะ benchmark จึงใช้ benchmark เป็น champion (กติกา MASE)'
-                  : `ชนะ seasonal benchmark (MASE ${forecast.metrics.mase ?? '-'} < 1.0)`}
+                  ? 'No model has beaten the benchmark yet — the benchmark stays champion (MASE rule)'
+                  : `Beats the seasonal benchmark (MASE ${forecast.metrics.mase ?? '-'} < 1.0)`}
               </div>
             </div>
 
@@ -310,7 +310,7 @@ export function DemandForecastPanel() {
                 {' · '}MASE {forecast.metrics.mase ?? '-'}
               </div>
               <div className="text-[11px] text-slate-500 mt-1.5">
-                rolling-origin backtest บนข้อมูลจริง · {forecast.interval.coverage_empirical !== null
+                rolling-origin backtest on real billing data · {forecast.interval.coverage_empirical !== null
                   ? `held-out coverage ${(forecast.interval.coverage_empirical * 100).toFixed(0)}%`
                   : ''}
               </div>
