@@ -1,12 +1,10 @@
-import Link from 'next/link';
 import type { OptimizePlan } from '../useOptimizePlan';
 
-// Page header with the run / edit / offline status badges
+// Page title row with the run / edit / offline status badges (nav lives in AppHeader)
 export function OptimizeHeader({ plan }: { plan: OptimizePlan }) {
   const { data, phase, manual, offline, editing, conflicts } = plan;
   return (
     <header className="opt-header">
-      <Link href="/" className="opt-back">← Dashboard</Link>
       <div className="opt-title">
         <h1>Production Optimization</h1>
         <div className="opt-sub">

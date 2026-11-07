@@ -2,15 +2,14 @@
 
 import { DemandForecastPanel } from '@/features/forecast/components/DemandForecastPanel';
 import { ModelPerformancePanel } from '@/features/forecast/components/ModelPerformancePanel';
+import { AppHeader } from '@/components/AppHeader';
 import { ConstraintBanner } from '@/features/simulation/components/ConstraintBanner';
-import { DashboardHeader } from '@/features/simulation/components/DashboardHeader';
 import { KpiCards } from '@/features/simulation/components/KpiCards';
 import { NotLiveNotice } from '@/features/simulation/components/NotLiveNotice';
 import { PresetBar } from '@/features/simulation/components/PresetBar';
 import { ScenarioHistoryTable } from '@/features/simulation/components/ScenarioHistoryTable';
 import { SimulatorForm } from '@/features/simulation/components/SimulatorForm';
 import { Toast } from '@/features/simulation/components/Toast';
-import { ValueChainFlow } from '@/features/simulation/components/ValueChainFlow';
 import { useScenarioSimulator } from '@/features/simulation/useScenarioSimulator';
 
 export default function IBPPlatformDashboard() {
@@ -20,7 +19,7 @@ export default function IBPPlatformDashboard() {
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-16">
       {sim.toastMessage && <Toast toastMessage={sim.toastMessage} />}
 
-      <DashboardHeader backendOnline={sim.backendOnline} />
+      <AppHeader />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         <PresetBar onApplyPreset={sim.applyPreset} />
@@ -51,8 +50,6 @@ export default function IBPPlatformDashboard() {
             <KpiCards currentResult={sim.currentResult} />
           </div>
         </div>
-
-        <ValueChainFlow currentResult={sim.currentResult} />
 
         {/* AI Demand Forecast (real billing data) */}
         <DemandForecastPanel />

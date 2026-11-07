@@ -5,16 +5,16 @@
    All class names are prefixed opt- so nothing leaks into other pages. */
 
 .opt-root {
-  --page: #f7f7f5;
+  --page: #f8fafc;
   --surface: #ffffff;
-  --surface2: #f0efec;
-  --line: #e1e0d9;
-  --baseline: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.1);
-  --hatch: rgba(11, 11, 11, 0.16);
-  --ink: #0b0b0b;
-  --ink2: #52514e;
-  --muted: #898781;
+  --surface2: #f1f5f9;
+  --line: #e2e8f0;
+  --baseline: #cbd5e1;
+  --border: rgba(15, 23, 42, 0.1);
+  --hatch: rgba(15, 23, 42, 0.16);
+  --ink: #0f172a;
+  --ink2: #475569;
+  --muted: #64748b;
   --good: #0ca30c;
   --warn: #fab219;
   --warn-text: #925e00;
@@ -278,6 +278,18 @@
   box-shadow: 0 0 0 3px rgba(250, 178, 25, 0.45);
   animation: opt-pulse 1.4s ease-in-out infinite;
 }
+
+/* ---- collapsible notes (reading guide, assumptions) ---- */
+.opt-details { margin: 10px 20px 0; font-size: 12.5px; }
+.opt-details summary {
+  cursor: pointer;
+  color: var(--ink2);
+  font-weight: 600;
+  width: fit-content;
+  border-radius: 6px;
+}
+.opt-details summary:hover { color: var(--ink); }
+.opt-details[open] summary { margin-bottom: 6px; }
 @keyframes opt-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(250, 178, 25, 0); }
   50% { box-shadow: 0 0 0 4px rgba(250, 178, 25, 0.5); }

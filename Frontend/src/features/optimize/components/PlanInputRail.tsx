@@ -169,7 +169,7 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
               updateProductDemand={plan.updateProductDemand}
             />
             <p className="opt-railnote">
-              Tons to deliver within the horizon — the solver maximizes how much of this it can produce. ▸ breaks a group down into its products.
+              Tons to deliver within the horizon — the solver maximizes how much of this it can produce. ▸ expands a group into its products.
             </p>
           </>
         )}
@@ -225,7 +225,7 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
           />
         </div>
         <p className="opt-railnote">
-          No grade switch happens on a weekend or holiday, and a VCR campaign never ends on one. Plant rules live in Backend/optimization/plant_config.yaml.
+          No grade switch happens on a weekend or holiday, and a VCR campaign never ends on one. Every plant rule is listed under the plan.
         </p>
       </div>
     </aside>

@@ -39,12 +39,16 @@ export function ModelPerformancePanel() {
           </span>
         </div>
         <p className="text-xs sm:text-sm text-slate-500 mt-0.5">
-          ผลการแข่งขันจริงจาก rolling-origin backtest (16 folds × 3 เดือน) —
-          โมเดลที่ชนะ naive เท่านั้นที่ได้เป็น champion · MASE &lt; 1.0 = ชนะ seasonal benchmark
+          Real results from the rolling-origin backtest (16 folds × 3 months) —
+          only models that beat naive become champion · MASE &lt; 1.0 = beats the seasonal benchmark
         </p>
       </div>
 
-      <div className="p-6 space-y-4">
+      <details>
+        <summary className="cursor-pointer select-none px-6 py-3 text-sm font-semibold text-slate-600 hover:text-slate-800 border-t border-slate-200">
+          Backtest details — per-grade results
+        </summary>
+        <div className="p-6 pt-4 space-y-4">
         {data.models.map((m: GradeModel) => {
           const isNaive = m.champion === NAIVE;
           return (
@@ -52,7 +56,7 @@ export function ModelPerformancePanel() {
               <div className="sm:w-56 shrink-0">
                 <div className="text-sm font-bold text-slate-800 font-mono">{m.product_id}</div>
                 <div className="text-[11px] text-slate-400">
-                  {m.months} เดือน · {Math.round(m.avg_tons).toLocaleString('en-US')} t/mo
+                  {m.months} mo · {Math.round(m.avg_tons).toLocaleString('en-US')} t/mo
                 </div>
               </div>
 
@@ -80,7 +84,7 @@ export function ModelPerformancePanel() {
                     : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                 }`}
               >
-                {isNaive ? 'ใช้ Benchmark' : 'ชนะ Benchmark'}
+                {isNaive ? 'Uses benchmark' : 'Beats benchmark'}
               </span>
             </div>
           );
@@ -89,12 +93,13 @@ export function ModelPerformancePanel() {
         <div className="pt-3 border-t border-slate-100 text-[11px] text-slate-400 flex items-start gap-1.5">
           <RefreshCw className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>
-            WAPE = ค่าความคลาดเคลื่อนเฉลี่ยถ่วงน้ำหนัก (ยิ่งต่ำยิ่งแม่น) ·
-            coverage ที่แสดงเป็นค่า held-out จากตัวอย่างที่จำกัด · เทรนล่าสุด{' '}
+            WAPE = weighted absolute percentage error (lower is more accurate) ·
+            the coverage shown is held-out from limited samples · last trained{' '}
             {new Date(data.trained_at).toLocaleString()}
           </span>
         </div>
-      </div>
+        </div>
+      </details>
     </section>
   );
 }

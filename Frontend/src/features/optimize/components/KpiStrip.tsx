@@ -44,15 +44,13 @@ export function KpiStrip({ plan, view }: { plan: OptimizePlan; view: OptimizeRes
         <div className="opt-foot">per the 11-pair transition table</div>
         {kpiDelta('changeover_days', false, ' d')}
       </div>
-      <div className="opt-tile">
-        <div className="opt-lab">{editing ? 'Rule check' : 'Solver'}</div>
-        {editing ? (
+      {editing && (
+        <div className="opt-tile">
+          <div className="opt-lab">Rule check</div>
           <div className={'opt-val' + (conflicts ? ' bad' : '')}>{conflicts} <small>conflict{conflicts === 1 ? '' : 's'}</small></div>
-        ) : (
-          <div className="opt-val">{view.kpis.solve_s.toFixed(2)} <small>s</small></div>
-        )}
-        <div className="opt-foot">{view.kpis.status} · mode: {view.mode}</div>
-      </div>
+          <div className="opt-foot">{view.kpis.status}</div>
+        </div>
+      )}
     </div>
   );
 }
