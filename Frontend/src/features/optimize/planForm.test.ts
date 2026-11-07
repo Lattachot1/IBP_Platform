@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BASE_FORM, PRESETS, buildRequest, nextMondayIso, scaleDemand } from './planForm';
+import { BASE_FORM, PRESETS, buildRequest, groupDemand, groupUsesProducts, nextMondayIso, scaleDemand } from './planForm';
 import { DEMAND_DEFAULT } from './samplePlan';
 
 afterEach(() => {
@@ -18,7 +18,30 @@ describe('buildRequest', () => {
       time_limit_s: 30,
       initial: { grade: 'BR150', remain_days: 2, rx12_age: 54, rx34_age: 0 },
       use_planning_data: false,
+      product_demand: {},
     });
+  });
+
+  it('turns product rows into the group total and product_demand', () => {
+    const form = { ...BASE_FORM, productDemand: { BR150: { '990101': 900, '990102': 300, '990103': 0 } } };
+    const body = buildRequest(form);
+    expect(body.demand.BR150).toBe(1200);
+    expect(body.demand.VCR412).toBe(BASE_FORM.demand.VCR412);       // untouched group keeps its field
+    expect(body.product_demand).toEqual({ '990101': 900, '990102': 300 });
+    expect(groupUsesProducts(form, 'BR150')).toBe(true);
+    expect(groupDemand(form, 'BR150')).toBe(1200);
+  });
+
+  it('falls back to the group field when every product row is empty or 0', () => {
+    const form = { ...BASE_FORM, productDemand: { BR150: { '990101': 0 } } };
+    expect(groupUsesProducts(form, 'BR150')).toBe(false);
+    expect(buildRequest(form).demand.BR150).toBe(BASE_FORM.demand.BR150);
+    expect(buildRequest(form).product_demand).toEqual({});
+  });
+
+  it('sends no product demand when planning from the planning data', () => {
+    const form = { ...BASE_FORM, usePlanningData: true, productDemand: { BR150: { '990101': 900 } } };
+    expect(buildRequest(form).product_demand).toEqual({});
   });
 
   it('asks for the product-level plan when planning data is switched on', () => {

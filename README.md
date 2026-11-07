@@ -36,12 +36,12 @@ IBP_Platform/
 │   ├── api/                       # REST endpoints แยกตามกลุ่ม
 │   │   ├── health.py              # GET /api/health
 │   │   ├── scenarios.py           # /api/simulate, /api/scenarios (+ /save)
-│   │   ├── forecast.py            # /api/v1/models, history, forecast, retrain (+ engine state)
+│   │   ├── forecast.py            # /api/v1/models, history, forecast, retrain, forecasts/from-engine (+ engine state)
 │   │   ├── optimize.py            # /api/v1/optimize (+ /evaluate, /catalog)
 │   │   ├── products.py            # /api/v1/products (product master: list, create, edit, deactivate)
 │   │   └── planning.py            # /api/v1/imports/* (CSV) + อ่าน stock, qc-lots, sales-orders, forecasts
 │   ├── simulation.py              # กฎ What-if (capacity/OT/revenue), Scenario models, in-memory store
-│   ├── planning_data/             # ข้อมูลวางแผนระดับ product: products.py, imports.py (อ่าน CSV + รายงานแถวที่ผิด), store.py (DB/in-memory), seed.py
+│   ├── planning_data/             # ข้อมูลวางแผนระดับ product: products.py, imports.py (อ่าน CSV + รายงานแถวที่ผิด), store.py (DB/in-memory), seed.py, engine_forecast.py (forecast engine → DemandForecasts)
 │   ├── sample_data/               # ข้อมูลสมมติ (mock) รูปแบบเดียวกับ export จาก SAP — ไม่ใช่ข้อมูลลูกค้า
 │   ├── database.py                # MS SQL Access Layer (pymssql) — DB ล่มตอบ 503 ไม่แอบเก็บใน RAM
 │   ├── forecasting/               # Demand forecasting engine (data, models, backtest, service)
@@ -158,6 +158,7 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
 ### Python Backend (`:8080` — รวม Forecasting Engine ไว้ภายใน)
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
 - `POST /api/v1/optimize` — Production Schedule Optimization (CP-SAT engine อ่านกฎจาก `Backend/optimization/plant_config.yaml` — ถ้าไม่ได้ติดตั้ง ortools จะ fallback เป็น sample plan)
+  - `"product_demand": {"<material>": tons}` — แตก demand ของ group เป็นราย product: demand ของ group = ผลรวมของ product ใน group แล้วผลผลิตของ group แบ่งให้ product ตามสัดส่วน demand (ทุก product ใน group ได้ % เท่ากัน) ตอบกลับเพิ่ม `product_fulfillment` และ `days[].products` ใช้ได้ทั้ง optimize และ evaluate (หน้า `/optimize`: กด ▸ หน้าชื่อ group ในช่อง Demand เพื่อกรอกราย product; `Backend/optimization/product_split.py`)
   - `"use_planning_data": true` — วางแผนระดับ product จากข้อมูลวางแผน (สต็อก, lot รอ QC, order ที่ยังเปิด, forecast รายเดือน) แทน `demand` ราย grade (`Backend/optimization/planning.py`):
     - กฎโรงงานทุกข้อยังอยู่ที่ product group; ผลผลิตรายวันของแต่ละ group ถูกแบ่งลง product ใน group
     - ลำดับเป้าหมาย: order ส่งทันวัน (ตัน×วันที่ช้า) → สต็อกไม่ต่ำกว่าขั้นต่ำ → forecast ส่วนที่ยังไม่มี order ผลิตครบภายในสิ้นเดือน (หักสต็อกส่วนเกินราย product) → changeover น้อย → เผื่อสต็อกให้ demand หลังจบแผนตามสัดส่วนยอดขาย
@@ -176,6 +177,7 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
   ```bash
   curl -X POST "http://localhost:8080/api/v1/imports/sales-orders?dry_run=true" -H "Content-Type: text/csv" --data-binary @Backend/sample_data/mock/sap_sales_orders.csv
   ```
+- `POST /api/v1/forecasts/from-engine` (`?dry_run=true`) — เขียน forecast รายเดือนของ forecast engine ราย group (`UBEPOL BR150` → `BR150`) ตั้งแต่เดือนปัจจุบันลง `DemandForecasts` เป็น source `engine` (แถว `manual` ของ planner ยังทับค่าของ engine เหมือนเดิม) — เมื่อตั้งค่า DB ไว้ backend ทำให้เองหลัง train ทุกครั้ง (ตอน start และ `POST /api/v1/retrain`) ส่วนโหมด in-memory ต้องกดปุ่ม **Update from forecast engine** ในแท็บ Forecast ของหน้า Planning Data; สถานะล่าสุดอยู่ใน `GET /api/health` → `forecast_publish`
 - `GET /api/v1/stock` (`?on=` snapshot ล่าสุดไม่เกินวันนั้น), `GET /api/v1/qc-lots` (`?status=`), `GET /api/v1/sales-orders` (`?status=&due_from=&due_to=`, มี `open_tons`), `GET /api/v1/forecasts` (`?month_from=&month_to=`) — ถ้าไม่ได้ตั้งค่า DB จะเริ่มด้วยข้อมูลสมมติจาก `Backend/sample_data/mock/`
 - หน้า `/optimize` โหมด **Planning data — plan per product** (เลือกใน Demand source): วางแผนจากข้อมูลวางแผนแทนตัวเลข demand ราย grade แล้วแสดง KPI ของ order/สต็อก, ตารางสถานะ order (วันพร้อมส่ง/ช้ากี่วัน), กราฟสต็อกคาดการณ์ราย product เทียบขั้นต่ำ, ตาราง forecast ราย group-เดือน และ tooltip บน Gantt บอกผลผลิตราย product (โหมดแก้แผนด้วยมือยังใช้กับแผนแบบนี้ไม่ได้)
 - หน้า `/planning-data` — Planning Data (ลิงก์จาก Dashboard): แก้/เพิ่ม/เลิกขายสินค้าใน product master, import CSV ทั้ง 4 แบบโดยกด **Check file** (dry run แสดงบรรทัด/คอลัมน์ที่ผิด) ก่อน **Import**, และดูสต็อก, lot รอ QC, order, forecast ที่อยู่ในระบบ

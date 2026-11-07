@@ -119,8 +119,15 @@ def draft_from_result(res: dict) -> dict:
 
 
 def evaluate(req: dict) -> dict:
-    """Entry point used by main.py. Raises ValueError on a malformed draft."""
-    return _evaluate(_load_config(), req)
+    """Entry point used by main.py. Raises ValueError on a malformed draft
+    (ProductDemandError, a ValueError too, for an unusable product_demand)."""
+    from optimization import product_split
+
+    demand_split = product_split.load_and_prepare(req)
+    result = _evaluate(_load_config(), req)
+    if demand_split is not None:
+        product_split.apply(result, demand_split)
+    return result
 
 
 def _evaluate(cfg: dict, req: dict) -> dict:

@@ -84,6 +84,28 @@ export interface OptimizeResult {
   checks: CheckItem[];
   assumptions: string[];
   planning?: PlanningSection;   // use_planning_data only
+  product_fulfillment?: ProductFulfillRow[];   // product_demand only
+}
+
+/** Output shared over the products a group's demand was broken into. */
+export interface ProductFulfillRow {
+  material_no: string;
+  description: string;
+  group: string;
+  demand: number;
+  produced: number;
+  shortage: number;
+}
+
+/** GET /api/v1/optimize/catalog — the groups with their active products. */
+export interface CatalogProduct {
+  material_no: string;
+  description: string;
+  min_stock_tons: number;
+}
+
+export interface CatalogGroup extends GradeMeta {
+  products: CatalogProduct[];
 }
 
 // ---- product-level planning (Backend/optimization/planning.py report) ----

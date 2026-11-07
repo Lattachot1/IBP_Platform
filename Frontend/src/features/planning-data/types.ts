@@ -80,6 +80,18 @@ export interface SalesOrder {
   status: 'open' | 'closed' | 'cancelled';
 }
 
+/** POST /api/v1/forecasts/from-engine */
+export interface EngineForecastReport {
+  status: 'published' | 'checked';
+  rows: number;
+  groups: string[];
+  first_month: string | null;
+  last_month: string | null;
+  skipped_grades: string[];
+  inserted: number;
+  updated: number;
+}
+
 export interface Forecast {
   group_code: string;
   forecast_month: string;

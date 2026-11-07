@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from optimization import engine as optimization_engine
 from optimization import manual as optimization_manual
+from optimization.product_split import ProductDemandError
 from optimization.schemas import EvaluateRequest, OptimizeRequest
 from planning_data import products
 
@@ -57,6 +58,12 @@ def _reject_non_finite(values: dict) -> None:
             )
 
 
+def _numbers(req: OptimizeRequest) -> dict:
+    values = {("demand." + grade): value for grade, value in (req.demand or {}).items()}
+    values.update({("product_demand." + m): value for m, value in (req.product_demand or {}).items()})
+    return values
+
+
 @router.post("/api/v1/optimize")
 def handle_optimize(req: OptimizeRequest) -> dict:
     """Production schedule optimization (Phase 1: sample-plan stub).
@@ -70,12 +77,11 @@ def handle_optimize(req: OptimizeRequest) -> dict:
     set in memory mode) instead of `demand`, and adds a `planning` section
     plus `days[].products`. A configured database that is down -> 503.
     """
-    _reject_non_finite({
-        ("demand." + grade): value
-        for grade, value in (req.demand or {}).items()
-    })
+    _reject_non_finite(_numbers(req))
     try:
         return optimization_engine.solve(req.model_dump())
+    except ProductDemandError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except products.StoreUnavailable:
         log.exception("[Database] Planning data: optimize could not load its inputs")
         raise HTTPException(status_code=503, detail="Database unavailable: could not load the planning data")
@@ -90,11 +96,13 @@ def handle_optimize_evaluate(req: EvaluateRequest) -> dict:
     `checks` of level "conflict" for every broken rule, so the page draws
     the edited plan with the same Gantt and highlights the offending days.
     """
-    _reject_non_finite({
-        ("demand." + grade): value
-        for grade, value in (req.demand or {}).items()
-    })
+    _reject_non_finite(_numbers(req))
     try:
         return optimization_manual.evaluate(req.model_dump())
+    except ProductDemandError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except products.StoreUnavailable:
+        log.exception("[Database] Products: evaluate could not load the product master")
+        raise HTTPException(status_code=503, detail="Database unavailable: could not load the product master")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))

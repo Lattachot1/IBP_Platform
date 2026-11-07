@@ -40,7 +40,9 @@ export function OptimizeHeader({ plan }: { plan: OptimizePlan }) {
             Backend is an older version — restart python main.py, then press Run optimization
           </span>
         )}
-        {phase === 'loading' && <span className="opt-badge">Connecting to backend…</span>}
+        {phase === 'sample' && (
+          <span className="opt-badge">Sample plan — press Run optimization to solve</span>
+        )}
       </div>
     </header>
   );

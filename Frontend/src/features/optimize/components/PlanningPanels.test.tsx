@@ -59,6 +59,7 @@ describe('planning panels', () => {
     const rows = () => screen.getAllByRole('row').slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent);
     expect(rows()).toEqual(['9100000002/10', '9100000003/20']);
     expect(screen.getByText('Not covered')).toBeTruthy();
+    expect(screen.getAllByText('UBEPOL BR360B MOCK-A')).toHaveLength(2);    // product names, not codes
     fireEvent.click(screen.getByRole('tab', { name: /All due in the horizon/ }));
     expect(rows()).toEqual(['9100000001/10', '9100000002/10', '9100000003/20']);
     fireEvent.click(screen.getByRole('tab', { name: /Due after the horizon/ }));
@@ -75,9 +76,10 @@ describe('planning panels', () => {
 
   it('draws projected stock against the minimum', () => {
     render(<StockProjectionPanel planning={planning} grades={GRADES} />);
-    expect(screen.getByRole('img', { name: '990401 stock from 90 to 240 t' })).toBeTruthy();
-    const row = screen.getByText('990401').closest('tr') as HTMLElement;
-    expect(row.textContent).toContain('UBEPOL BR360B MOCK-A · BR360B');
+    expect(screen.getByRole('img', { name: 'UBEPOL BR360B MOCK-A stock from 90 to 240 t' })).toBeTruthy();
+    const row = screen.getByText('UBEPOL BR360B MOCK-A').closest('tr') as HTMLElement;
+    expect(row.textContent).not.toContain('990401');
+    expect(row.textContent).toContain('BR360B');
     expect(row.textContent).toContain('230');     // produced
   });
 
@@ -103,6 +105,11 @@ describe('product lines in the Gantt tooltip', () => {
     expect(productLines(day, 5)).toEqual(['  · 990101: 161 t', '  · 990102: 69 t', 'In stock after QC: 2026-12-03']);
   });
 
+  it('shows product names when they are known', () => {
+    expect(productLines(day, undefined, { '990101': 'UBEPOL BR150 MOCK-A' })).toEqual([
+      '  · UBEPOL BR150 MOCK-A: 161 t', '  · 990102: 69 t']);
+  });
+
   it('adds nothing for a day without products', () => {
     expect(productLines({ ...day, products: [] }, 5)).toEqual([]);
   });
@@ -117,6 +124,11 @@ describe('useOptimizePlan with planning data', () => {
       return new Response(JSON.stringify(result), { status: 200 });
     });
     const { result } = renderHook(() => useOptimizePlan());
+    // The page opens on the bundled sample and does not solve on its own.
+    expect(result.current.phase).toBe('sample');
+    expect(result.current.view?.mode).toBe('sample');
+    expect(fetchMock.mock.calls.some((c) => c[0] === `${API_BASE_URL}/api/v1/optimize`)).toBe(false);
+    await act(() => result.current.run());
     await waitFor(() => expect(result.current.phase).toBe('ok'));
     expect(result.current.canEdit).toBe(true);
 

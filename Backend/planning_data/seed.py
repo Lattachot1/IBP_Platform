@@ -27,6 +27,7 @@ from collections import Counter
 from datetime import date
 from typing import List, Tuple
 
+from planning_data.engine_forecast import group_of_grade
 from planning_data.products import (
     ProductCreate,
     ProductExists,
@@ -35,7 +36,6 @@ from planning_data.products import (
     load_mock_products,
 )
 
-GRADE_PREFIX = "UBEPOL "
 EDITOR = "seed script"
 
 
@@ -61,8 +61,8 @@ def billing_products(df, groups, since: date) -> Tuple[List[ProductCreate], Coun
             continue
         material = str(material).strip()
         grade = _most_common(rows[LEVEL_COL], "")
-        group = grade[len(GRADE_PREFIX):] if grade.startswith(GRADE_PREFIX) else grade
-        if group not in groups:
+        group = group_of_grade(grade, groups)
+        if group is None:
             skipped[grade or "(no grade)"] += 1
             continue
         products.append(ProductCreate(

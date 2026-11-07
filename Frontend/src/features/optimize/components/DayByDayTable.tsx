@@ -1,11 +1,11 @@
 import { dispOf } from '../samplePlan';
 import { formatNumber } from '@/lib/format';
-import type { OptimizePlan } from '../useOptimizePlan';
+import { nameOf, type OptimizePlan } from '../useOptimizePlan';
 import type { OptimizeResult } from '../types';
 
 // Collapsible day-by-day table
 export function DayByDayTable({ plan, view }: { plan: OptimizePlan; view: OptimizeResult }) {
-  const { grades, conflictDays } = plan;
+  const { grades, conflictDays, productNames } = plan;
   return (
     <section className="opt-panel opt-details" aria-label="Day-by-day table">
       <details className="opt-details">
@@ -37,7 +37,7 @@ export function DayByDayTable({ plan, view }: { plan: OptimizePlan; view: Optimi
                       .join(' + ')}
                     {d.products && d.products.length > 0 && (
                       <div className="opt-dayprod">
-                        {d.products.map((p) => `${p.material_no} ${formatNumber(p.tons)}`).join(' · ')}
+                        {d.products.map((p) => `${nameOf(productNames, p.material_no)} ${formatNumber(p.tons)}`).join(' · ')}
                       </div>
                     )}
                   </td>
