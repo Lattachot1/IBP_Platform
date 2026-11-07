@@ -233,6 +233,12 @@ SCENARIOS = {
     # product-level plan on the planning data (in-memory mode: sample_data/mock)
     "S5 planning data (mock)": dict(horizon_days=28, start_date="2026-11-09", use_planning_data=True),
 }
+# Tests need reproducible plans: one search worker (the default 8 is faster
+# but its result varies with machine load - the flaky CI failure) and a
+# doubled time limit, since one thread needs longer to the same quality.
+for _kwargs in SCENARIOS.values():
+    _kwargs.setdefault("time_limit_s", 60)
+    _kwargs.setdefault("num_search_workers", 1)
 
 
 if __name__ == "__main__":
