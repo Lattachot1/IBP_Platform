@@ -57,6 +57,7 @@ export function PlanningKpiStrip({ planning }: { planning: PlanningSection }) {
 type OrderFilter = 'problems' | 'horizon' | 'after';
 
 export function OrderStatusPanel({ planning }: { planning: PlanningSection }) {
+  const names = Object.fromEntries(planning.products.map((p) => [p.material_no, p.description]));
   const problems = planning.orders.filter((o) => o.in_horizon && (o.status === 'late' || o.status === 'not_covered'));
   const [filter, setFilter] = useState<OrderFilter>(problems.length ? 'problems' : 'horizon');
   const rows =
@@ -83,7 +84,7 @@ export function OrderStatusPanel({ planning }: { planning: PlanningSection }) {
           <thead>
             <tr>
               <th>Order / item</th>
-              <th>Material</th>
+              <th>Product</th>
               <th className="num">Open (t)</th>
               <th>Due</th>
               <th>Ready</th>
@@ -98,7 +99,7 @@ export function OrderStatusPanel({ planning }: { planning: PlanningSection }) {
               rows.map((o) => (
                 <tr key={`${o.order_no}/${o.item_no}`}>
                   <td className="mono">{o.order_no}/{o.item_no}</td>
-                  <td className="mono">{o.material_no}</td>
+                  <td>{names[o.material_no] ?? o.material_no}</td>
                   <td className="mono num">{formatNumber(o.open_tons)}</td>
                   <td className="mono">{o.due_date}</td>
                   <td className="mono">{o.ready_date ?? '—'}</td>
@@ -130,7 +131,7 @@ export function StockSpark({ product, color }: { product: PlannedProduct; color:
   const points = values.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
   return (
     <svg className="opt-spark" width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img"
-      aria-label={`${product.material_no} stock from ${formatNumber(product.start_stock)} to ${formatNumber(product.end_stock)} t`}>
+      aria-label={`${product.description} stock from ${formatNumber(product.start_stock)} to ${formatNumber(product.end_stock)} t`}>
       {bottom < 0 && <line x1={0} x2={W} y1={y(0)} y2={y(0)} className="opt-spark-zero" />}
       {product.min_stock > 0 && <line x1={0} x2={W} y1={y(product.min_stock)} y2={y(product.min_stock)} className="opt-spark-min" />}
       <polyline points={points} fill="none" stroke={color} strokeWidth={1.8} />
@@ -164,9 +165,9 @@ export function StockProjectionPanel({ planning, grades }: { planning: PlanningS
                   <td>
                     <span className="opt-gcode">
                       <i className="opt-dot" style={{ background: `var(--s${slot})` }} />
-                      <span className="mono">{p.material_no}</span>
+                      {p.description}
                     </span>
-                    <div className="opt-subtle">{p.description} · {dispOf(grades, p.group)}</div>
+                    <div className="opt-subtle">{dispOf(grades, p.group)}</div>
                   </td>
                   <td className="mono num">{formatNumber(p.start_stock)}</td>
                   <td><StockSpark product={p} color={`var(--s${slot})`} /></td>

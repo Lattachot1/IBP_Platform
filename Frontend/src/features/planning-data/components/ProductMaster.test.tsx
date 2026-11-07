@@ -2,11 +2,19 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { API_BASE_URL } from '@/lib/apiClient';
+
 import type { Product } from '../types';
-import type { ProductMasterState } from '../usePlanningData';
+import type { PlanningViewsState, ProductMasterState } from '../usePlanningData';
 import { ProductMaster } from './ProductMaster';
 
-afterEach(cleanup);
+const fetchMock = vi.fn();
+vi.stubGlobal('fetch', fetchMock);
+
+afterEach(() => {
+  cleanup();
+  fetchMock.mockReset();
+});
 
 const product = (material_no: string, group_code: string, overrides: Partial<Product> = {}): Product => ({
   material_no,
@@ -19,7 +27,18 @@ const product = (material_no: string, group_code: string, overrides: Partial<Pro
   ...overrides,
 });
 
-function renderMaster(overrides: Partial<ProductMasterState> = {}) {
+const views = (overrides: Partial<PlanningViewsState> = {}): PlanningViewsState => ({
+  stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data', rows: [{ material_no: '990101', on_hand_tons: 90 }] },
+  lots: [{ lot_no: 'L1', material_no: '990101', tons: 40, produced_date: '2026-11-01', release_date: '2026-11-06', status: 'in_qc' }],
+  orders: [{ order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open' }],
+  forecasts: [{ group_code: 'BR150', forecast_month: '2026-12-01', source: 'manual', tons: 2600, updated_by: 'Planner A' }],
+  loading: false,
+  error: null,
+  refresh: vi.fn().mockResolvedValue(undefined),
+  ...overrides,
+});
+
+function renderMaster(viewOverrides: Partial<PlanningViewsState> = {}, masterOverrides: Partial<ProductMasterState> = {}) {
   const master: ProductMasterState = {
     products: [product('990101', 'BR150'), product('990104', 'BR150', { is_active: false }), product('990501', 'VCR412')],
     groups: [{ id: 'BR150', disp: 'BR150', slot: 1 }, { id: 'VCR412', disp: 'VCR-412', slot: 4 }],
@@ -29,9 +48,9 @@ function renderMaster(overrides: Partial<ProductMasterState> = {}) {
     refresh: vi.fn(),
     save: vi.fn().mockResolvedValue(null),
     add: vi.fn().mockResolvedValue(null),
-    ...overrides,
+    ...masterOverrides,
   };
-  render(<ProductMaster master={master} />);
+  render(<ProductMaster master={master} views={views(viewOverrides)} />);
   return master;
 }
 
@@ -45,6 +64,12 @@ describe('ProductMaster', () => {
     expect(within(row('990104')).getByText('Inactive')).toBeTruthy();
   });
 
+  it('summarises the planning data in the card subtitle', () => {
+    renderMaster();
+    expect(screen.getByText(/Stock is the snapshot of 2026-11-06/)).toBeTruthy();
+    expect(screen.getByText(/1 lots in QC · 1 open orders/)).toBeTruthy();
+  });
+
   it('filters by group and hides inactive products', () => {
     renderMaster();
     fireEvent.change(screen.getByLabelText('Filter by group'), { target: { value: 'BR150' } });
@@ -52,6 +77,40 @@ describe('ProductMaster', () => {
     fireEvent.click(screen.getByLabelText('Show inactive'));
     expect(screen.queryByText('990104')).toBeNull();
     expect(screen.getByText('990101')).toBeTruthy();
+  });
+
+  it('shows on hand next to minimum stock and marks a shortage', () => {
+    renderMaster();
+    expect(within(row('990101')).getByText('90').className).toContain('text-rose-600');
+    expect(within(row('990101')).getByText('100')).toBeTruthy();
+  });
+
+  it('shows a dash for products without planning data', () => {
+    renderMaster({ stock: { snapshot_date: null, loaded_at: null, loaded_by: null, rows: [] }, lots: [], orders: [] });
+    expect(within(row('990501')).getAllByText('—').length).toBe(3);
+  });
+
+  it('sums open orders with the earliest due date', () => {
+    renderMaster({ orders: [
+      { order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open' },
+      { order_no: 'SO2', item_no: 1, material_no: '990101', tons: 100, shipped_tons: 0, open_tons: 100, due_date: '2026-11-30', status: 'open' },
+      { order_no: 'SO3', item_no: 1, material_no: '990101', tons: 50, shipped_tons: 50, open_tons: 0, due_date: '2026-11-10', status: 'closed' },
+    ] });
+    expect(within(row('990101')).getByText('300')).toBeTruthy();
+    expect(within(row('990101')).getByText(/next due 2026-11-12/)).toBeTruthy();
+  });
+
+  it('expands a row into its QC lots, sales orders and group forecast', () => {
+    renderMaster();
+    expect(screen.queryByText('L1')).toBeNull();
+    fireEvent.click(within(row('990101')).getByRole('button', { name: 'Details of 990101' }));
+    expect(screen.getByText('L1')).toBeTruthy();
+    expect(screen.getByText('SO1/1')).toBeTruthy();
+    expect(screen.getByText(/Group forecast — BR150/)).toBeTruthy();
+    expect(screen.getByText('manual (overrides engine)')).toBeTruthy();
+    expect(screen.getByText(/Last change: sample data/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Details of 990101' }));
+    expect(screen.queryByText('L1')).toBeNull();
   });
 
   it('deactivates and reactivates instead of deleting', () => {
@@ -80,7 +139,7 @@ describe('ProductMaster', () => {
   });
 
   it('shows the backend error of a failed save on the row', async () => {
-    renderMaster({ save: vi.fn().mockResolvedValue('Database unavailable: product NOT changed') });
+    renderMaster({}, { save: vi.fn().mockResolvedValue('Database unavailable: product NOT changed') });
     fireEvent.click(within(row('990101')).getByRole('button', { name: 'Deactivate' }));
     expect((await screen.findByRole('alert')).textContent).toContain('NOT changed');
   });
@@ -97,7 +156,28 @@ describe('ProductMaster', () => {
   });
 
   it('shows a load error instead of rows', () => {
-    renderMaster({ error: 'cannot reach the backend at http://localhost:8080', products: [] });
+    renderMaster({}, { error: 'cannot reach the backend at http://localhost:8080', products: [] });
     expect(screen.getByText(/Could not load the product master: cannot reach the backend/)).toBeTruthy();
+  });
+
+  it('updates the forecast from the engine and reloads the table', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      status: 'published', rows: 20, groups: ['BR150', 'VCR412'], first_month: '2026-11', last_month: '2027-08',
+      skipped_grades: ['UBEPOL BR150GN'], inserted: 20, updated: 0 }), { status: 200 }));
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    renderMaster({ refresh });
+    fireEvent.click(screen.getByRole('button', { name: /Update from forecast engine/ }));
+    const note = await screen.findByRole('status');
+    expect(note.textContent).toBe('20 engine rows for BR150, VCR412 (2026-11 to 2027-08) · 20 new, 0 updated · not a plant group: UBEPOL BR150GN');
+    expect(fetchMock.mock.calls[0][0]).toBe(`${API_BASE_URL}/api/v1/forecasts/from-engine`);
+    expect(refresh).toHaveBeenCalled();
+  });
+
+  it('explains when the engine is not trained', async () => {
+    renderMaster();
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      detail: 'Forecast engine unavailable (billing data or ML libraries missing)' }), { status: 503 }));
+    fireEvent.click(screen.getByRole('button', { name: /Update from forecast engine/ }));
+    expect((await screen.findByRole('alert')).textContent).toContain('Forecast engine unavailable');
   });
 });

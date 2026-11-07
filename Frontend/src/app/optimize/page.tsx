@@ -5,7 +5,6 @@ import { ConstraintChecks } from '@/features/optimize/components/ConstraintCheck
 import { DayByDayTable } from '@/features/optimize/components/DayByDayTable';
 import { FulfillmentPanel } from '@/features/optimize/components/FulfillmentPanel';
 import { KpiStrip } from '@/features/optimize/components/KpiStrip';
-import { LoadingNotice } from '@/features/optimize/components/LoadingNotice';
 import { OptimizeHeader } from '@/features/optimize/components/OptimizeHeader';
 import { PlanInputRail } from '@/features/optimize/components/PlanInputRail';
 import { PlanTooltip } from '@/features/optimize/components/PlanTooltip';
@@ -18,7 +17,7 @@ import './optimize.css';
 
 export default function OptimizePage() {
   const plan = useOptimizePlan();
-  const { data, view, phase, tip } = plan;
+  const { data, view, tip } = plan;
 
   return (
     <div className="opt-root">
@@ -45,8 +44,6 @@ export default function OptimizePage() {
           </main>
         </div>
       )}
-
-      {phase === 'loading' && <LoadingNotice />}
 
       {tip && <PlanTooltip tip={tip} />}
     </div>

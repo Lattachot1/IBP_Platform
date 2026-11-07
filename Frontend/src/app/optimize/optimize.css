@@ -955,3 +955,24 @@ table.opt-table td.opt-empty { text-align: center; color: var(--muted); padding:
 .opt-spark { display: block; overflow: visible; }
 .opt-spark-min { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 3 3; }
 .opt-spark-zero { stroke: var(--baseline); stroke-width: 1; }
+
+/* ---- demand broken down per product ---- */
+.opt-expand {
+  width: 18px;
+  height: 18px;
+  border: 0;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--ink2);
+  line-height: 1;
+}
+.opt-expand-gap { display: inline-block; width: 18px; }
+.opt-demandgroup.open { background: var(--surface2); border-radius: 6px; padding-bottom: 4px; margin-bottom: 4px; }
+.opt-prodrows { padding-left: 26px; }
+.opt-prodrow { font-size: 12px; }
+.opt-pcode, .opt-pname { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.opt-demandrow input.opt-sum { background: var(--surface2); color: var(--ink2); font-weight: 600; }
+.opt-prodnote { margin: 2px 8px 4px 0; }
+.opt-frow.opt-prodfrow { padding-left: 22px; font-size: 12px; }
+.opt-frow.opt-prodfrow .opt-ftrack { height: 6px; }

@@ -34,7 +34,7 @@ try:
 except ImportError:  # pyyaml missing → the sample fallback keeps the API alive
     yaml = None
 
-from optimization import planning
+from optimization import planning, product_split
 from optimization.sample_plan import (
     ASSUMPTIONS,
     CHECKS,
@@ -647,14 +647,24 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
 
 
 def solve(req: dict) -> dict:
-    """Entry point used by main.py — response contract identical to Phase 1."""
+    """Entry point used by main.py — response contract identical to Phase 1.
+
+    product_demand (tons per product) is summed into each group's demand
+    before solving and the output is shared over the products afterwards
+    (optimization/product_split.py). Raises ProductDemandError for a
+    product the plan cannot use.
+    """
     started = time.perf_counter()
     cfg = _load_config()
+    demand_split = product_split.load_and_prepare(req)
     try:
-        return _solve_cspat(cfg, req, started)
+        result = _solve_cspat(cfg, req, started)
     except ImportError:
-        return _sample_response(
+        result = _sample_response(
             req,
             "ortools is not installed — serving the Phase 1 sample plan instead. "
             "Install with: pip install ortools pyyaml",
         )
+    if demand_split is not None:
+        product_split.apply(result, demand_split)
+    return result

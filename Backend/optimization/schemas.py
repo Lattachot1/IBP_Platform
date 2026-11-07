@@ -30,6 +30,10 @@ class OptimizeRequest(BaseModel):
     # Plan per product from the planning data (stock, QC lots, open orders,
     # monthly forecast) instead of `demand`; see optimization/planning.py
     use_planning_data: bool = False
+    # Tons per product (SAP material) for the groups the planner broke down;
+    # each such group's demand becomes the sum of its products. Ignored with
+    # use_planning_data. See optimization/product_split.py
+    product_demand: Optional[Dict[str, float]] = None
 
 
 # ---- hand-edited plan (editable Gantt) → POST /api/v1/optimize/evaluate ----

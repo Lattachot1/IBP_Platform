@@ -158,6 +158,7 @@ Forecasting Engine เดิม (model-service, Port 5000) ถูกรวมเ
 ### Python Backend (`:8080` — รวม Forecasting Engine ไว้ภายใน)
 - `POST /api/simulate` — คำนวณผลกระทบ Demand, Capacity, Service Level, และ Financials
 - `POST /api/v1/optimize` — Production Schedule Optimization (CP-SAT engine อ่านกฎจาก `Backend/optimization/plant_config.yaml` — ถ้าไม่ได้ติดตั้ง ortools จะ fallback เป็น sample plan)
+  - `"product_demand": {"<material>": tons}` — แตก demand ของ group เป็นราย product: demand ของ group = ผลรวมของ product ใน group แล้วผลผลิตของ group แบ่งให้ product ตามสัดส่วน demand (ทุก product ใน group ได้ % เท่ากัน) ตอบกลับเพิ่ม `product_fulfillment` และ `days[].products` ใช้ได้ทั้ง optimize และ evaluate (หน้า `/optimize`: กด ▸ หน้าชื่อ group ในช่อง Demand เพื่อกรอกราย product; `Backend/optimization/product_split.py`)
   - `"use_planning_data": true` — วางแผนระดับ product จากข้อมูลวางแผน (สต็อก, lot รอ QC, order ที่ยังเปิด, forecast รายเดือน) แทน `demand` ราย grade (`Backend/optimization/planning.py`):
     - กฎโรงงานทุกข้อยังอยู่ที่ product group; ผลผลิตรายวันของแต่ละ group ถูกแบ่งลง product ใน group
     - ลำดับเป้าหมาย: order ส่งทันวัน (ตัน×วันที่ช้า) → สต็อกไม่ต่ำกว่าขั้นต่ำ → forecast ส่วนที่ยังไม่มี order ผลิตครบภายในสิ้นเดือน (หักสต็อกส่วนเกินราย product) → changeover น้อย → เผื่อสต็อกให้ demand หลังจบแผนตามสัดส่วนยอดขาย

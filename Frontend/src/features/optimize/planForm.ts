@@ -25,6 +25,8 @@ export interface PlanForm {
   demand: Record<string, number>;
   /** plan per product from the planning data instead of `demand` */
   usePlanningData: boolean;
+  /** group -> material -> tons; a group with any product above 0 takes their sum */
+  productDemand: Record<string, Record<string, number>>;
 }
 
 // Changeover penalty per objective (tons-equivalent per changeover day),
@@ -47,6 +49,7 @@ export const BASE_FORM: PlanForm = {
   timeLimitS: 30,
   demand: { ...DEMAND_DEFAULT },
   usePlanningData: false,
+  productDemand: {},
 };
 
 export function toIso(d: Date): string {
@@ -72,12 +75,31 @@ export function scaleDemand(base: Record<string, number>, factor: number): Recor
   return out;
 }
 
+const validTons = (v: number | undefined) => (v !== undefined && Number.isFinite(v) && v >= 0 ? v : 0);
+
+/** The product rows of a group that carry demand (tons above 0). */
+export function productRows(f: PlanForm, group: string): [string, number][] {
+  return Object.entries(f.productDemand[group] ?? {}).filter(([, v]) => validTons(v) > 0);
+}
+
+/** True when the group's demand is the sum of its products. */
+export function groupUsesProducts(f: PlanForm, group: string): boolean {
+  return productRows(f, group).length > 0;
+}
+
+/** Demand of a group: the sum of its products when it has any, else the group field. */
+export function groupDemand(f: PlanForm, group: string): number {
+  const rows = productRows(f, group);
+  return rows.length ? rows.reduce((sum, [, v]) => sum + v, 0) : validTons(f.demand[group]);
+}
+
 /** The exact JSON body for POST /api/v1/optimize (stable key order). */
 export function buildRequest(f: PlanForm) {
   const demand: Record<string, number> = {};
+  const productDemand: Record<string, number> = {};
   GRADES.forEach((g) => {
-    const v = f.demand[g.id];
-    demand[g.id] = Number.isFinite(v) && v >= 0 ? v : 0;
+    demand[g.id] = groupDemand(f, g.id);
+    if (!f.usePlanningData) productRows(f, g.id).forEach(([material, v]) => (productDemand[material] = v));
   });
   return {
     horizon_days: clamp(f.horizonDays, HORIZON_MIN, HORIZON_MAX),
@@ -93,6 +115,7 @@ export function buildRequest(f: PlanForm) {
       rx34_age: clamp(f.rx34Age, 0, 365),
     },
     use_planning_data: f.usePlanningData,
+    product_demand: productDemand,
   };
 }
 

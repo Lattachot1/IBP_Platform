@@ -3,17 +3,17 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatNumber } from '@/lib/format';
-import { API_BASE_URL } from '@/lib/apiClient';
+import { API_BASE_URL, getJson } from '@/lib/apiClient';
 import { DEMAND_DEFAULT, GRADES, SAMPLE_PLAN, dispOf } from './samplePlan';
 import { campaignStarts, cleaningAt, conflictCount, conflictDaysOf, draftFromResult, horizonOf, moveCleaning, resizeCampaign, type Draft, type Pair } from './manualPlan';
 import { HORIZON_MIN, TIME_LIMIT_MAX, OBJECTIVES, BASE_FORM, nextMondayIso, buildRequest, toIso, type PlanForm } from './planForm';
-import type { OptimizeResult, PlanDay } from './types';
+import type { CatalogGroup, OptimizeResult, PlanDay } from './types';
 
 // Gantt geometry (keep in sync with .opt-ghead / .opt-grow in optimize.css).
 export const CELL_W = 46;
 export const LABEL_W = 70;
 
-export type Phase = 'loading' | 'ok' | 'offline' | 'stale';
+export type Phase = 'ok' | 'offline' | 'stale' | 'sample';
 
 /** Why the latest run produced no plan. */
 export interface SolveProblem {
@@ -52,9 +52,14 @@ export interface TipState {
 
 export const STATUS_EN: Record<string, string> = { prod: 'Producing', clean: 'Cleaning', idle: 'Standby' };
 
+/** Product name for display; the material number only when no name is known. */
+export function nameOf(names: Record<string, string> | undefined, material: string): string {
+  return names?.[material] || material;
+}
+
 /** Tooltip lines for a day's output per product, with the day it clears QC. */
-export function productLines(d: PlanDay, qcDays?: number): string[] {
-  const lines = (d.products ?? []).map((p) => `  · ${p.material_no}: ${formatNumber(p.tons)} t`);
+export function productLines(d: PlanDay, qcDays?: number, names?: Record<string, string>): string[] {
+  const lines = (d.products ?? []).map((p) => `  · ${nameOf(names, p.material_no)}: ${formatNumber(p.tons)} t`);
   if (qcDays !== undefined && lines.length > 0) {
     const ready = new Date(`${d.iso}T12:00:00`);
     ready.setDate(ready.getDate() + qcDays);
@@ -65,13 +70,17 @@ export function productLines(d: PlanDay, qcDays?: number): string[] {
 
 export function useOptimizePlan() {
   const [form, setForm] = useState<PlanForm>(BASE_FORM);
-  const [data, setData] = useState<OptimizeResult | null>(null);
+  // The bundled sample plan is on screen from the first paint; a real solve
+  // (~6 s) waits for the planner to press Run optimization.
+  const [data, setData] = useState<OptimizeResult | null>(SAMPLE_PLAN);
   const [shown, setShown] = useState<ShownResult | null>(null);
-  const [phase, setPhase] = useState<Phase>('loading');
+  const [phase, setPhase] = useState<Phase>('sample');
   const [solving, setSolving] = useState(false);
   const [problem, setProblem] = useState<SolveProblem | null>(null);
   const [manual, setManual] = useState<ManualState | null>(null);
   const [tip, setTip] = useState<TipState | null>(null);
+  /** groups with their products, for breaking demand down per product (null = not loaded) */
+  const [catalog, setCatalog] = useState<CatalogGroup[] | null>(null);
 
   // Guards against a slow earlier solve overwriting a newer result
   // (solves may legitimately take the full time limit).
@@ -166,7 +175,13 @@ export function useOptimizePlan() {
     // same empty input; the backend would default to next Monday anyway.
     const initial = { ...BASE_FORM, startDate: nextMondayIso(), demand: { ...DEMAND_DEFAULT } };
     setForm(initial);
-    run(initial);
+    // The sample stands in for a solved plan until Run optimization is
+    // pressed; the shown key matches the form so no "inputs changed" chip
+    // shows until the planner actually edits something.
+    setShown({ key: JSON.stringify(buildRequest(initial)), form: initial });
+    getJson<{ groups: CatalogGroup[] }>('/api/v1/optimize/catalog')
+      .then((c) => setCatalog(c.groups))
+      .catch(() => setCatalog(null));   // offline or no product master: group fields only
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -183,6 +198,16 @@ export function useOptimizePlan() {
     const num = Number(raw);
     if (!Number.isFinite(num)) return;
     setForm((prev) => ({ ...prev, demand: { ...prev.demand, [grade]: num } }));
+  }
+
+  /** '' clears the row; a group with no product above 0 goes back to its own field. */
+  function updateProductDemand(group: string, material: string, raw: string) {
+    const num = raw.trim() === '' ? 0 : Number(raw);
+    if (!Number.isFinite(num) || num < 0) return;
+    setForm((prev) => ({
+      ...prev,
+      productDemand: { ...prev.productDemand, [group]: { ...(prev.productDemand[group] ?? {}), [material]: num } },
+    }));
   }
 
   function setHoliday(index: number, value: string) {
@@ -349,7 +374,7 @@ export function useOptimizePlan() {
       lines.push(line);
     });
     if (d.products && d.products.length > 0) {
-      lines.push(...productLines(d, data?.planning?.qc_days));
+      lines.push(...productLines(d, data?.planning?.qc_days, productNames));
     }
     lines.push(`Reactor: ${d.rx}`);
     if (d.note) lines.push(d.note);
@@ -359,6 +384,16 @@ export function useOptimizePlan() {
       lines,
     });
   }
+
+  // material -> name, from the catalog and whatever plan is on screen
+  const productNames = useMemo(() => {
+    const names: Record<string, string> = {};
+    catalog?.forEach((g) => g.products.forEach((p) => (names[p.material_no] = p.description)));
+    const shownPlan = manual?.result ?? manual?.base ?? data;
+    shownPlan?.product_fulfillment?.forEach((p) => (names[p.material_no] = p.description));
+    shownPlan?.planning?.products.forEach((p) => (names[p.material_no] = p.description));
+    return names;
+  }, [catalog, data, manual?.result, manual?.base]);
 
   const offline = phase === 'offline';
   const grades = data?.grades ?? GRADES;
@@ -374,7 +409,7 @@ export function useOptimizePlan() {
   // The rule checker does not split output over products yet, so a plan
   // from the planning data cannot be edited by hand (its order and stock
   // results would silently stop matching the plan).
-  const editBlockedReason = !data || data.days.length === 0 || offline || phase === 'stale'
+  const editBlockedReason = !data || data.days.length === 0 || offline || phase === 'stale' || phase === 'sample'
     ? 'Needs a live backend result to check the rules'
     : data.planning
     ? 'Hand edits are not available yet for a plan built from the planning data'
@@ -417,6 +452,9 @@ export function useOptimizePlan() {
     patch,
     applyAndRun,
     updateDemand,
+    updateProductDemand,
+    catalog,
+    productNames,
     setHoliday,
     removeHoliday,
     startEditing,

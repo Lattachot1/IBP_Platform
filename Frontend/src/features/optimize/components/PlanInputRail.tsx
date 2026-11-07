@@ -3,6 +3,7 @@ import { HORIZON_MIN, HORIZON_MAX, TIME_LIMIT_MIN, TIME_LIMIT_MAX, OBJECTIVES } 
 import { clamp } from '@/lib/format';
 import type { OptimizePlan } from '../useOptimizePlan';
 import type { OptimizeResult } from '../types';
+import { DemandInputs } from './DemandInputs';
 
 // Left rail: every plan input plus the Run button
 export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: OptimizeResult }) {
@@ -160,26 +161,15 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
           </p>
         ) : (
           <>
-            {grades.map((g) => (
-              <div className="opt-demandrow" key={g.id}>
-                <span className="opt-gcode">
-                  <i
-                    className="opt-dot"
-                    style={{ background: `var(--s${g.slot})` }}
-                  />
-                  {g.disp}
-                </span>
-                <input
-                  type="number"
-                  min={0}
-                  value={form.demand[g.id] ?? 0}
-                  onChange={(e) => updateDemand(g.id, e.target.value)}
-                  aria-label={`demand ${g.disp}`}
-                />
-              </div>
-            ))}
+            <DemandInputs
+              form={form}
+              grades={grades}
+              catalog={plan.catalog}
+              updateDemand={updateDemand}
+              updateProductDemand={plan.updateProductDemand}
+            />
             <p className="opt-railnote">
-              Tons to deliver within the horizon — the solver maximizes how much of this it can produce.
+              Tons to deliver within the horizon — the solver maximizes how much of this it can produce. ▸ breaks a group down into its products.
             </p>
           </>
         )}

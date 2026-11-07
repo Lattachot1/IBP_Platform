@@ -4,7 +4,7 @@ import type { OptimizeResult } from '../types';
 
 // Plan title, status chips and the problem / offline alerts
 export function StageHeader({ plan, view }: { plan: OptimizePlan; view: OptimizeResult }) {
-  const { form, shown, solving, problem, manual, unapplied, showProblem, applyAndRun, offline, grades, hasPlan, editing, conflicts, fixes } = plan;
+  const { form, shown, solving, problem, manual, unapplied, showProblem, applyAndRun, offline, phase, grades, hasPlan, editing, conflicts, fixes } = plan;
   return (
     <>
       <div className="opt-stagehead">
@@ -12,7 +12,7 @@ export function StageHeader({ plan, view }: { plan: OptimizePlan; view: Optimize
         <span className="opt-title">
           <span className={'opt-sub' + (unapplied && !editing ? ' old' : '')}>
             {view.start_date} · starts from {dispOf(shown?.form.initGrade ?? form.initGrade, grades)} ·{' '}
-            {editing ? 'hand-edited plan (optimized plan shown as ghost)' : offline ? 'built-in sample data' : 'live backend result'}
+            {editing ? 'hand-edited plan (optimized plan shown as ghost)' : offline || phase === 'sample' ? 'built-in sample data' : 'live backend result'}
             {view.planning && !editing ? ' · planned per product from the planning data' : ''}
           </span>
         </span>
