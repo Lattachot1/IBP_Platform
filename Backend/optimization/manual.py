@@ -127,7 +127,44 @@ def evaluate(req: dict) -> dict:
     result = _evaluate(_load_config(), req)
     if demand_split is not None:
         product_split.apply(result, demand_split)
+    if req.get("use_planning_data"):
+        _attach_planning(result, _load_config(), req)
     return result
+
+
+def _attach_planning(result: dict, cfg: dict, req: dict) -> None:
+    """Product split + planning section for a HAND-EDITED plan built from
+    the planning data. The edited days fix each group's output per day; the
+    products share it by order share (largest remainder), then planning
+    report() recomputes stock, orders and the forecast tier against that
+    production. Raises planning_data StoreUnavailable when the store is
+    down (the API layer answers 503).
+    """
+    from optimization import planning
+
+    grades = list(cfg["grades"].keys())
+    caps = {g: int(cfg["grades"][g]["daily_capacity_tons"]) for g in grades}
+    days = result["days"]
+    H = len(days)
+    start = date.fromisoformat(result["start_date"])
+    qc_days = int((cfg.get("planning") or {}).get("qc_days") or 5)
+
+    inputs = planning.load_inputs(grades, start, H, qc_days)
+    prod = [{} for _ in range(H)]
+    for d, day in enumerate(days):
+        for part in day["parts"]:
+            if part["tons"]:
+                prod[d][part["grade"]] = prod[d].get(part["grade"], 0) + int(part["tons"])
+    gi = {g: i for i, g in enumerate(grades)}
+    prod_idx = [{gi[g]: prod[d].get(g, 0) for g in grades} for d in range(H)]
+
+    plan_model = planning.attach_free(inputs, prod_idx, grades, caps)
+    dates = [date.fromisoformat(day["iso"]) for day in days]
+    section = planning.report(plan_model, lambda v: v, dates)
+    result["planning"] = section["planning"]
+    for d, alloc in enumerate(section["alloc_by_day"]):
+        if alloc:
+            days[d]["products"] = [{"material_no": m, "tons": t} for m, t in sorted(alloc.items())]
 
 
 def _evaluate(cfg: dict, req: dict) -> dict:
