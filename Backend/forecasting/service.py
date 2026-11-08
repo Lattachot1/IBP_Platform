@@ -58,13 +58,12 @@ def train_grade(series, extra_candidates=None) -> dict:
     candidates = dict(MODELS)
     if extra_candidates:
         candidates.update(extra_candidates)
-    candidates["MED-ENS"] = (
-        lambda fns: (lambda s, h: np.median(np.array([f(s, h) for f in fns]), axis=0))
-    )(list(candidates.values()))
     evaluations = {}
+    per_fold_preds = {}
     for name, fn in candidates.items():
         # Fit ONCE per fold - every metric below reuses these predictions
         per_fold_pred = [fn(f[0], HORIZON) for f in folds]
+        per_fold_preds[name] = per_fold_pred
         actual = np.concatenate([f[1] for f in folds])
         predicted = np.concatenate(per_fold_pred)
         scales = [s for s in (_naive12_scale(f[0]) for f in folds) if not np.isnan(s)]
@@ -90,6 +89,51 @@ def train_grade(series, extra_candidates=None) -> dict:
             "_actual": actual,
             "_predicted": predicted,
         }
+
+    # Weighted top-3 ensemble, scored like any other candidate. Replaces the
+    # old all-member median, whose weak members diluted every forecast month.
+    ranked = sorted(
+        (n for n, e in evaluations.items() if np.isfinite(e["wape"])),
+        key=lambda n: evaluations[n]["wape"],
+    )
+    top3 = ranked[:3]
+    ensemble_fn = None
+    if len(top3) >= 2:
+        weights = np.array([1.0 / max(evaluations[n]["wape"], 1e-6) for n in top3])
+        weights /= weights.sum()
+        ens_preds = [
+            np.sum([w * per_fold_preds[n][i] for w, n in zip(weights, top3)], axis=0)
+            for i in range(len(folds))
+        ]
+        actual = np.concatenate([f[1] for f in folds])
+        predicted = np.concatenate(ens_preds)
+        scales = [s for s in (_naive12_scale(f[0]) for f in folds) if not np.isnan(s)]
+        mase = float("nan")
+        if scales:
+            mase = float(np.abs(actual - predicted).mean() / np.mean(scales))
+        res_h = {
+            h: np.array([abs(f[1][h - 1] - p[h - 1])
+                         for f, p in zip(folds, ens_preds)])
+            for h in range(1, HORIZON + 1)
+        }
+        wape_h = {
+            h: _wape(np.array([f[1][h - 1] for f in folds]),
+                     np.array([p[h - 1] for p in ens_preds]))
+            for h in range(1, HORIZON + 1)
+        }
+        evaluations["TOP3-ENS"] = {
+            "wape": _wape(actual, predicted),
+            "mase": mase,
+            "wape_h": wape_h,
+            "res_h": res_h,
+            "_actual": actual,
+            "_predicted": predicted,
+        }
+        members = {n: candidates[n] for n in top3}
+
+        def ensemble_fn(series_train, h, _members=members, _weights=weights):
+            preds = np.array([m(series_train, h) for m in _members.values()], dtype=float)
+            return np.sum(_weights @ preds, axis=0)
 
     eligible = {n: e for n, e in evaluations.items() if np.isfinite(e["wape"])}
     if not eligible:
@@ -139,7 +183,7 @@ def train_grade(series, extra_candidates=None) -> dict:
         "q_hi": q_band,
         "std_q_lo": std_q,
         "std_q_hi": std_q,
-        "baseline_12": candidates[best_name](series, MAX_HORIZON),
+        "baseline_12": (ensemble_fn if best_name == "TOP3-ENS" else candidates[best_name])(series, MAX_HORIZON),
         "months": len(series),
         "avg_tons": float(series.mean()),
         "trained_through": str(series.index[-1]),
