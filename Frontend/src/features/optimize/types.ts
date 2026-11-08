@@ -139,6 +139,10 @@ export interface PlannedProduct {
   days_below_min: number;
   share: number;
   lookahead_tons: number;
+  /** net requirement over the horizon (orders due + minimum stock + forecast share − stock − lots in QC) */
+  requirement: number;
+  /** the part of the requirement the plan does not produce */
+  shortage: number;
 }
 
 export interface ForecastMonthRow {

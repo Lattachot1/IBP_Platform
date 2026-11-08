@@ -755,6 +755,38 @@ table.opt-table tr.conflict td { background: var(--bad-bg); }
   background: transparent;
   color: var(--muted);
 }
+/* per-product split: thin strip at the bottom of a day cell dividing the
+   day's output over its products, in proportion (toggle: "Product split") */
+.opt-prodstrip {
+  flex: none;
+  height: 6px;
+  display: flex;
+  gap: 1px;
+  border-radius: 3px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.opt-prodstrip > span {
+  min-width: 2px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.opt-prodstrip > span:nth-child(even) { background: rgba(255, 255, 255, 0.22); }
+.opt-phleft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.opt-prodtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink2);
+  cursor: pointer;
+  white-space: nowrap;
+}
 .opt-gcap {
   font-size: 12px;
   color: var(--muted);

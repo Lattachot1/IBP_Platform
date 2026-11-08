@@ -1,4 +1,4 @@
-import { Fragment } from 'react';
+import { Fragment, useState } from 'react';
 import { CELL_W, LABEL_W, type OptimizePlan } from '../useOptimizePlan';
 import { CLEAN_DAYS, PAIRS, addCleaning, cleaningAt, pairOfReactor, removeCampaign, removeCleaning, resizeCampaign, setCampaignGrade, splitCampaign, swapCampaign } from '../manualPlan';
 import { dispOf, slotOf } from '../samplePlan';
@@ -8,6 +8,8 @@ import type { OptimizeResult, PlanDay } from '../types';
 // Daily Gantt (plant + RX1-RX4) incl. the hand-edit mode
 export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data: OptimizeResult; view: OptimizeResult }) {
   const { manual, setManual, setTip, startEditing, stopEditing, updateDraft, onResizeDown, onCleanDown, showTip, grades, hasPlan, editing, conflictDays, starts, selectedCampaign, canEdit, editBlockedReason, gridCols } = plan;
+  const [byProduct, setByProduct] = useState(false);
+  const hasProducts = view.days.some((d) => (d.products?.length ?? 0) > 0);
 
   function dayBlocks(d: PlanDay) {
     return d.parts.map((p, k) => (
@@ -31,10 +33,34 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
     ));
   }
 
+  /** Thin strip under a day's blocks: how the day's output is shared over its products. */
+  function prodStrip(d: PlanDay) {
+    if (!byProduct || !d.products || d.products.length === 0) return null;
+    return (
+      <div className="opt-prodstrip" aria-hidden="true">
+        {d.products.map((p) => (
+          <span key={p.material_no} style={{ flexGrow: Math.max(p.tons, 0.05) }} />
+        ))}
+      </div>
+    );
+  }
+
   return (
     <section className="opt-panel" aria-label="Daily production Gantt">
       <div className="opt-phrow">
-        <h2 className="opt-ph">Daily production schedule — one row per reactor (Plant + RX1–RX4)</h2>
+        <div className="opt-phleft">
+          <h2 className="opt-ph">Daily production schedule — one row per reactor (Plant + RX1–RX4)</h2>
+          {hasProducts && (
+            <label className="opt-prodtoggle">
+              <input
+                type="checkbox"
+                checked={byProduct}
+                onChange={(e) => setByProduct(e.target.checked)}
+              />
+              Product split
+            </label>
+          )}
+        </div>
         {!editing ? (
           <button
             type="button"
@@ -202,7 +228,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
                     onMouseMove={(e) => showTip(e, d)}
                     onMouseLeave={() => setTip(null)}
                   >
-                    {dayBlocks(d)}
+                    <>{dayBlocks(d)}{prodStrip(d)}</>
                   </div>
                 ))}
               </div>
@@ -264,7 +290,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
                 onMouseMove={(e) => showTip(e, d)}
                 onMouseLeave={() => setTip(null)}
               >
-                {dayBlocks(d)}
+                <>{dayBlocks(d)}{prodStrip(d)}</>
               </div>
             ))}
             {['RX1', 'RX2', 'RX3', 'RX4'].map((rid) => (
@@ -293,7 +319,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
                       onPointerDown={draggable ? (e) => onCleanDown(e, pair, i) : undefined}
                     >
                       {status === 'prod'
-                        ? dayBlocks(d)
+                        ? <>{dayBlocks(d)}{prodStrip(d)}</>
                         : (
                           <div className={'opt-gblk state-' + status}>
                             {status === 'clean' ? 'Cleaning' : 'Standby'}
@@ -315,7 +341,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
       <details className="opt-details">
         <summary>How to read this plan</summary>
         <p className="opt-gcap">
-          Plant row = plant-level grade for the day · RX1–RX4 rows = per-reactor status (producing / cleaning / standby) · two-tone block = changeover day (uses the special ceiling of that pair) · grey columns = Sat–Sun (production allowed, but no grade change)
+          Plant row = plant-level grade for the day · RX1–RX4 rows = per-reactor status (producing / cleaning / standby) · two-tone block = changeover day (uses the special ceiling of that pair) · grey columns = Sat–Sun (production allowed, but no grade change) · with &quot;Product split&quot; on, the strip at the bottom of each block shows how the day&apos;s output is shared over its products (hover for names and tons)
           {editing && ' · red outline = a plant rule is broken on that day (hover for the reason)'}
         </p>
       </details>
