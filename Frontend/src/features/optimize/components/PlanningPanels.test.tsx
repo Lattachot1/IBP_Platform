@@ -27,7 +27,7 @@ const planning: PlanningSection = {
   products: [{
     material_no: '990401', description: 'UBEPOL BR360B MOCK-A', group: 'BR360B', min_stock: 100, start_stock: 90,
     qc_release: [0, 0, 0], shipped: [0, 80, 0], produced: [0, 230, 0], stock: [90, 10, 240], end_stock: 240,
-    days_below_min: 2, share: 1, lookahead_tons: 150,
+    days_below_min: 2, share: 1, lookahead_tons: 150, requirement: 360, shortage: 130,
   }],
   orders: [
     { order_no: '9100000001', item_no: 10, material_no: '990401', open_tons: 40, due_date: '2026-11-10',

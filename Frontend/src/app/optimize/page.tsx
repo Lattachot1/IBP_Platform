@@ -1,5 +1,6 @@
 'use client';
 
+import { AppHeader } from '@/components/AppHeader';
 import { AssumptionsPanel } from '@/features/optimize/components/AssumptionsPanel';
 import { ConstraintChecks } from '@/features/optimize/components/ConstraintChecks';
 import { DayByDayTable } from '@/features/optimize/components/DayByDayTable';
@@ -21,6 +22,7 @@ export default function OptimizePage() {
 
   return (
     <div className="opt-root">
+      <AppHeader />
       <OptimizeHeader plan={plan} />
 
       {data && <QuickScenarios plan={plan} />}

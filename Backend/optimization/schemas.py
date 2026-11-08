@@ -26,6 +26,9 @@ class OptimizeRequest(BaseModel):
     demand: Optional[Dict[str, float]] = None   # tons per grade; None = defaults
     holidays: List[str] = Field(default_factory=list)   # ISO dates, company holidays
     time_limit_s: int = Field(default=30, ge=5, le=300)
+    # Solver search workers: 8 is fast, 1 is deterministic (the self-test
+    # pins 1 so a plan never varies with machine load). None = default 8.
+    num_search_workers: Optional[int] = Field(default=None, ge=1, le=8)
     initial: InitialState = Field(default_factory=InitialState)
     # Plan per product from the planning data (stock, QC lots, open orders,
     # monthly forecast) instead of `demand`; see optimization/planning.py

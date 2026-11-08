@@ -190,6 +190,26 @@ def test_minimum_stock_is_refilled(monkeypatch):
     assert a["days_below_min"] <= 6                 # only until the first output clears QC
 
 
+def test_report_carries_requirement_and_shortage_per_product(monkeypatch):
+    # requirement = orders due in the horizon + minimum stock + forecast share
+    # - starting stock - lots in QC; shortage = the part the plan cannot produce
+    forecasts = [Forecast(group_code="BR150", forecast_month=date(2026, 11, 1), source="engine", tons=3000)]
+    inputs = build([product("A", minimum=100), product("B")], snapshot(START, A=200, B=0),
+                   orders=[order("1", "A", 400, date(2026, 11, 17))], forecasts=forecasts, horizon=14)
+    res = solve_with(monkeypatch, inputs, horizon_days=14)
+    rows = {p["material_no"]: p for p in res["planning"]["products"]}
+    assert rows["A"]["requirement"] >= 400 + 100 - 200      # order + minimum - starting stock
+    assert rows["B"]["requirement"] == 0 and rows["B"]["shortage"] == 0
+    for p in rows.values():
+        made = sum(p["produced"])
+        assert p["shortage"] == round(max(0.0, p["requirement"] - made), 1)
+    # the group's demand in the fulfillment table is the sum of its products'
+    # requirements, up to per-product rounding (the solver takes whole tons,
+    # the report shows 0.1 t)
+    assert res["demand_used"]["BR150"] == pytest.approx(
+        sum(p["requirement"] for p in rows.values()), abs=0.5 * len(rows))
+
+
 def test_without_the_flag_the_response_is_unchanged(monkeypatch):
     def boom(*args, **kwargs):
         raise AssertionError("planning data must not be read")
@@ -223,6 +243,7 @@ def test_optimize_with_planning_data_on_the_mock_set(mock_memory):
     assert overdue["status"] == "late"
     for day in body["days"]:
         assert sum(p["tons"] for p in day["products"]) == sum(p["tons"] for p in day["parts"])
+    assert all("requirement" in p and "shortage" in p for p in plan["products"])
 
 
 def test_optimize_with_planning_data_needs_the_database(monkeypatch):

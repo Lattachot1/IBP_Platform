@@ -112,3 +112,24 @@ def pilot_series(df: pd.DataFrame = None) -> dict:
     """The four pilot grades with complete history (89 months)."""
     all_series = demand_series(df)
     return {name: all_series[name] for name in PILOT_GRADES if name in all_series}
+
+
+def brent_monthly() -> pd.Series | None:
+    """Monthly average Brent crude (USD/bbl), Period('M') index, or None.
+
+    External regressor context for the ML candidates (lag features only -
+    a consumer may use values up to its origin month, never the future).
+    None when the FRED download is absent: every consumer must then train
+    without the feature instead of failing.
+    """
+    path = DATA_DIR / "fred_brent.csv"
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path)
+        dates = pd.PeriodIndex(pd.to_datetime(df["observation_date"]), freq="M")
+        vals = pd.to_numeric(df["POILBREUSDM"], errors="coerce")
+        monthly = pd.Series(vals.to_numpy(), index=dates).groupby(level=0).mean().sort_index()
+        return monthly.dropna() if len(monthly) else None
+    except Exception:
+        return None

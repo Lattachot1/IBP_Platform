@@ -431,7 +431,11 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     # ---- solve --------------------------------------------------------------
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = float(max(5, min(int(req.get("time_limit_s") or 30), 180)))
-    solver.parameters.num_search_workers = 8
+    # 8 parallel workers find good plans fast but are nondeterministic - the
+    # returned plan varies with machine load (the flaky self-test failure).
+    # Callers that need reproducible plans (the self-test) pass 1.
+    workers = req.get("num_search_workers")
+    solver.parameters.num_search_workers = int(workers) if workers else 8
     status = solver.Solve(m)
     solve_s = round(time.perf_counter() - started, 3)
 

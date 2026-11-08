@@ -51,6 +51,18 @@ MIN_MONTHS = 16    # below this window length, fall back to seasonal naive
 ANN_ROUNDS = 40    # x 50 iters per round = 2000 iterations hard cap
 ANN_PATIENCE = 6   # stop after this many rounds without val improvement
 
+_BRENT_CACHE = None
+
+
+def _get_brent():
+    """Monthly Brent crude (Period('M') index) or None; loaded lazily once."""
+    global _BRENT_CACHE
+    if _BRENT_CACHE is None:
+        from .. import data
+        loaded = data.brent_monthly()
+        _BRENT_CACHE = "missing" if loaded is None or loaded.empty else loaded
+    return None if isinstance(_BRENT_CACHE, str) else _BRENT_CACHE
+
 
 # ---------------------------------------------------------------------------
 # shared helpers
@@ -63,13 +75,14 @@ def _seasonal_naive(v: np.ndarray, h: int) -> np.ndarray:
     return np.maximum(np.nan_to_num(out, nan=0.0), 0.0)
 
 
-def _features(hist: np.ndarray, target_month: int) -> list:
+def _features(hist: np.ndarray, target_month: int, brent_lags: list) -> list:
     return [
         hist[-1], hist[-2], hist[-3], hist[-12],          # lags 1/2/3/12
         hist[-3:].mean(), hist[-6:].mean(), hist[-12:].mean(),
         np.sin(2 * np.pi * (target_month - 1) / 12.0),    # season position
         np.cos(2 * np.pi * (target_month - 1) / 12.0),
         target_month / 12.0,
+        brent_lags[0], brent_lags[1],                     # brent at origin, -1
     ]
 
 
@@ -77,8 +90,11 @@ def _target_month(last_month: int, step: int) -> int:
     return (last_month + step - 1) % 12 + 1
 
 
-def _rows_for_step(v: np.ndarray, months: np.ndarray, step: int):
+def _rows_for_step(v: np.ndarray, months: np.ndarray, brent_vals: np.ndarray, step: int):
     """Rows predicting v[t+step] from history v[:t+1].
+
+    Brent lags are taken at the ORIGIN month t - known at prediction time,
+    never the target month, so no leakage into the horizon.
 
     Returns X, y (fit rows) and Xv, yv (validation rows = targets in the
     last VAL_MONTHS months of the window, used only by the ANN).
@@ -89,7 +105,8 @@ def _rows_for_step(v: np.ndarray, months: np.ndarray, step: int):
         tt = t + step
         if tt >= n:
             break
-        row = _features(v[: t + 1], int(months[tt]))
+        row = _features(v[: t + 1], int(months[tt]),
+                        [float(brent_vals[t]), float(brent_vals[t - 1])])
         if tt >= n - VAL_MONTHS:
             Xv.append(row)
             yv.append(v[tt])
@@ -198,13 +215,20 @@ def make_fn(params: dict):
             if len(v) < MIN_MONTHS or h < 1:
                 return _seasonal_naive(v, h)
 
+            brent = _get_brent()
+            brent_vals = (
+                brent.reindex(series_train.index, fill_value=0.0).to_numpy()
+                if brent is not None else np.zeros(len(v))
+            )
+            b1, b2 = float(brent_vals[-1]), float(brent_vals[-2])   # frozen at the origin
+
             kind = params.get("model", "rf")
             strategy = params.get("strategy", "direct")
 
             if strategy == "recursive":
                 # one one-step model; early stopping validates the same
                 # last-8-months targets one step ahead
-                X, y, Xv, yv = _rows_for_step(v, months, 1)
+                X, y, Xv, yv = _rows_for_step(v, months, brent_vals, 1)
                 model = art = None
                 if kind == "rf":
                     model = _fit_rf(params, X, y)
@@ -215,7 +239,7 @@ def make_fn(params: dict):
                 out = []
                 for _ in range(h):
                     m = m % 12 + 1
-                    row = _features(np.asarray(hist, dtype=float), m)
+                    row = _features(np.asarray(hist, dtype=float), m, [b1, b2])
                     if model is not None:
                         raw = float(model.predict(
                             np.asarray(row, dtype=float).reshape(1, -1))[0])
@@ -229,7 +253,7 @@ def make_fn(params: dict):
             # direct: one model per step
             models, arts = {}, {}
             for s in range(1, min(max(h, 8), MAX_STEP) + 1):
-                X, y, Xv, yv = _rows_for_step(v, months, s)
+                X, y, Xv, yv = _rows_for_step(v, months, brent_vals, s)
                 if len(X) + len(Xv) < 6:  # too few rows for this step
                     break
                 if kind == "rf":
@@ -241,7 +265,7 @@ def make_fn(params: dict):
             out = []
             for s in range(1, h + 1):
                 m = _target_month(m0, s)
-                row = _features(np.asarray(hist, dtype=float), m)
+                row = _features(np.asarray(hist, dtype=float), m, [b1, b2])
                 if s in models:
                     raw = float(models[s].predict(
                         np.asarray(row, dtype=float).reshape(1, -1))[0])

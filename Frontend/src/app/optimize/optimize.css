@@ -5,16 +5,16 @@
    All class names are prefixed opt- so nothing leaks into other pages. */
 
 .opt-root {
-  --page: #f7f7f5;
+  --page: #f8fafc;
   --surface: #ffffff;
-  --surface2: #f0efec;
-  --line: #e1e0d9;
-  --baseline: #c3c2b7;
-  --border: rgba(11, 11, 11, 0.1);
-  --hatch: rgba(11, 11, 11, 0.16);
-  --ink: #0b0b0b;
-  --ink2: #52514e;
-  --muted: #898781;
+  --surface2: #f1f5f9;
+  --line: #e2e8f0;
+  --baseline: #cbd5e1;
+  --border: rgba(15, 23, 42, 0.1);
+  --hatch: rgba(15, 23, 42, 0.16);
+  --ink: #0f172a;
+  --ink2: #475569;
+  --muted: #64748b;
   --good: #0ca30c;
   --warn: #fab219;
   --warn-text: #925e00;
@@ -278,6 +278,18 @@
   box-shadow: 0 0 0 3px rgba(250, 178, 25, 0.45);
   animation: opt-pulse 1.4s ease-in-out infinite;
 }
+
+/* ---- collapsible notes (reading guide, assumptions) ---- */
+.opt-details { margin: 10px 20px 0; font-size: 12.5px; }
+.opt-details summary {
+  cursor: pointer;
+  color: var(--ink2);
+  font-weight: 600;
+  width: fit-content;
+  border-radius: 6px;
+}
+.opt-details summary:hover { color: var(--ink); }
+.opt-details[open] summary { margin-bottom: 6px; }
 @keyframes opt-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(250, 178, 25, 0); }
   50% { box-shadow: 0 0 0 4px rgba(250, 178, 25, 0.5); }
@@ -742,6 +754,38 @@ table.opt-table tr.conflict td { background: var(--bad-bg); }
   border: 1px dashed var(--baseline);
   background: transparent;
   color: var(--muted);
+}
+/* per-product split: thin strip at the bottom of a day cell dividing the
+   day's output over its products, in proportion (toggle: "Product split") */
+.opt-prodstrip {
+  flex: none;
+  height: 6px;
+  display: flex;
+  gap: 1px;
+  border-radius: 3px;
+  overflow: hidden;
+  pointer-events: none;
+}
+.opt-prodstrip > span {
+  min-width: 2px;
+  background: rgba(255, 255, 255, 0.55);
+}
+.opt-prodstrip > span:nth-child(even) { background: rgba(255, 255, 255, 0.22); }
+.opt-phleft {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.opt-prodtoggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ink2);
+  cursor: pointer;
+  white-space: nowrap;
 }
 .opt-gcap {
   font-size: 12px;

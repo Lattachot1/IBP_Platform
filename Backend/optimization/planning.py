@@ -384,7 +384,9 @@ def report(plan: PlanModel, value, dates: List[date]) -> dict:
     for pv in plan.products:
         p = pv.product
         produced = [value(a) for a in pv.alloc]
-        produced_total[p.material_no] = sum(produced)
+        produced_tons = sum(produced)
+        produced_total[p.material_no] = produced_tons
+        need = net_requirement(p)
         for d, tons in enumerate(produced):
             if tons:
                 alloc_by_day[d][p.material_no] = tons
@@ -412,6 +414,10 @@ def report(plan: PlanModel, value, dates: List[date]) -> dict:
             "days_below_min": below_days,
             "share": round(p.share, 3),
             "lookahead_tons": round(p.lookahead, 1),
+            # requirement = orders due in the horizon + minimum stock + the
+            # forecast share due in the horizon - starting stock - lots in QC
+            "requirement": round(need, 1),
+            "shortage": round(max(0.0, need - produced_tons), 1),
         })
 
     # orders: FIFO per product in due order

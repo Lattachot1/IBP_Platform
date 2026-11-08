@@ -96,13 +96,31 @@ def forecast_sarima(train, h: int) -> np.ndarray:
         return forecast_seasonal_naive(train, h)
 
 
-def _gb_row(v_hist, month):
-    """Calendar/lag feature row for one forecast origin."""
+_BRENT_CACHE = None
+
+
+def _get_brent():
+    """Monthly Brent crude (Period('M') index) or None; loaded lazily once."""
+    global _BRENT_CACHE
+    if _BRENT_CACHE is None:
+        from . import data
+        loaded = data.brent_monthly()
+        _BRENT_CACHE = "missing" if loaded is None or loaded.empty else loaded
+    return None if isinstance(_BRENT_CACHE, str) else _BRENT_CACHE
+
+
+def _gb_row(v_hist, month, brent_lags):
+    """Calendar/lag feature row for one forecast origin.
+
+    brent_lags = [brent at the origin month, brent one month earlier] -
+    known at the origin, so recursive forecasts keep them frozen.
+    """
     ang = 2 * np.pi * (month - 1) / 12
     return [
         v_hist[-1], v_hist[-2], v_hist[-3], v_hist[-12],
         v_hist[-3:].mean(), v_hist[-6:].mean(), v_hist[-12:].mean(),
         np.sin(ang), np.cos(ang), month / 12.0,
+        brent_lags[0], brent_lags[1],
     ]
 
 
@@ -119,9 +137,17 @@ def forecast_gbr_median(series, h: int) -> np.ndarray:
     if len(v) < 24:
         return forecast_seasonal_naive(series, h)
 
+    brent = _get_brent()
+
+    def _lags(period):
+        if brent is None:
+            return [0.0, 0.0]
+        return [float(brent.get(period, brent.iloc[-1])),
+                float(brent.get(period - 1, brent.iloc[-1]))]
+
     X, y = [], []
     for t in range(12, len(v)):
-        X.append(_gb_row(v[:t], int(months[t])))
+        X.append(_gb_row(v[:t], int(months[t]), _lags(series.index[t - 1])))
         y.append(v[t])
     model = HistGradientBoostingRegressor(
         max_iter=400, learning_rate=0.05, max_leaf_nodes=31,
@@ -131,10 +157,11 @@ def forecast_gbr_median(series, h: int) -> np.ndarray:
 
     hist = list(v)
     mon = int(months[-1])
+    b1, b2 = _lags(series.index[-1])
     preds = []
     for _ in range(h):
         mon = mon % 12 + 1
-        feats = np.array(_gb_row(np.array(hist), mon)).reshape(1, -1)
+        feats = np.array(_gb_row(np.array(hist), mon, [b1, b2])).reshape(1, -1)
         yhat = max(0.0, float(model.predict(feats)[0]))
         preds.append(yhat)
         hist.append(yhat)

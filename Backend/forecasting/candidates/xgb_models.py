@@ -38,6 +38,18 @@ VAL_MONTHS = 8        # early-stopping validation = last 8 months of the window
 
 CANDIDATE_NAME = "XGBoost Regressor"
 
+_BRENT_CACHE = None
+
+
+def _get_brent():
+    """Monthly Brent crude (Period('M') index) or None; loaded lazily once."""
+    global _BRENT_CACHE
+    if _BRENT_CACHE is None:
+        from .. import data
+        loaded = data.brent_monthly()
+        _BRENT_CACHE = "missing" if loaded is None or loaded.empty else loaded
+    return None if isinstance(_BRENT_CACHE, str) else _BRENT_CACHE
+
 
 def _seasonal_naive(v: np.ndarray, h: int) -> np.ndarray:
     if len(v) < 12:
@@ -46,8 +58,13 @@ def _seasonal_naive(v: np.ndarray, h: int) -> np.ndarray:
     return np.tile(v[-12:], reps)[:h]
 
 
-def _row(v: np.ndarray, t: int, step: int, m_now: int, with_step: bool) -> list:
-    """Feature row for 'now' index t, predicting month t+step."""
+def _row(v: np.ndarray, t: int, step: int, m_now: int, with_step: bool,
+         brent_vals: np.ndarray) -> list:
+    """Feature row for 'now' index t, predicting month t+step.
+
+    Brent lags are taken at the ORIGIN month t - known at prediction time,
+    never the target month, so no leakage into the horizon.
+    """
     tm = ((m_now - 1 + step) % 12) + 1
     ang = 2.0 * np.pi * (tm - 1) / 12.0
     feat = [
@@ -61,6 +78,8 @@ def _row(v: np.ndarray, t: int, step: int, m_now: int, with_step: bool) -> list:
         np.sin(ang),                                 # target-month season
         np.cos(ang),
         v[t + step - 12] if t + step - 12 >= 0 else np.nan,  # target month, 1y ago
+        float(brent_vals[t]),                        # brent at origin, -1
+        float(brent_vals[t - 1]),
     ]
     if with_step:
         feat.append(float(step))
@@ -89,7 +108,7 @@ def _fit_model(params: dict, X_tr, y_tr, X_va, y_va):
     return model
 
 
-def _datasets(v, months, max_step, strategy):
+def _datasets(v, months, brent_vals, max_step, strategy):
     """Build train/validation matrices inside one training window.
 
     Validation = examples whose TARGET month is one of the last VAL_MONTHS
@@ -102,7 +121,8 @@ def _datasets(v, months, max_step, strategy):
     for s in range(1, max_step + 1):
         tr, va = ([], []), ([], [])
         for t in range(11, n - s):
-            row = _row(v, t, s, int(months[t]), with_step=(strategy == "single"))
+            row = _row(v, t, s, int(months[t]), with_step=(strategy == "single"),
+                       brent_vals=brent_vals)
             target = v[t + s]
             if t + s >= n - VAL_MONTHS:
                 (va[0].append(row), va[1].append(target))
@@ -139,7 +159,12 @@ def make_fn(params: dict):
         try:
             months = series_train.index.month.to_numpy()
             n = len(v)
-            ds = _datasets(v, months, MAX_STEP, strategy)
+            brent = _get_brent()
+            brent_vals = (
+                brent.reindex(series_train.index, fill_value=0.0).to_numpy()
+                if brent is not None else np.zeros(n)
+            )
+            ds = _datasets(v, months, brent_vals, MAX_STEP, strategy)
             naive = _seasonal_naive(v, h)
             preds = np.array(naive, dtype=float)  # spliced for uncovered steps
             if strategy == "direct":
@@ -148,14 +173,14 @@ def make_fn(params: dict):
                         continue
                     model = _fit_model(params, X_tr, y_tr, X_va, y_va)
                     x = np.array([_row(v, n - 1, s, int(months[-1]),
-                                       with_step=False)])
+                                       with_step=False, brent_vals=brent_vals)])
                     preds[s - 1] = max(0.0, float(model.predict(x)[0]))
             else:
                 if ds is not None:
                     model = _fit_model(params, ds[0], ds[1], ds[2], ds[3])
                     for s in range(1, min(h, MAX_STEP) + 1):
                         x = np.array([_row(v, n - 1, s, int(months[-1]),
-                                           with_step=True)])
+                                           with_step=True, brent_vals=brent_vals)])
                         preds[s - 1] = max(0.0, float(model.predict(x)[0]))
             return preds
         except Exception:
