@@ -74,6 +74,7 @@ export function ModelPerformancePanel() {
                 </div>
                 <div className="text-[11px] text-slate-400">
                   MASE {m.mase ?? '-'} · {m.champion}
+                  {m.champion_long ? ` · months 4–12: ${m.champion_long}` : ''}
                 </div>
               </div>
 
