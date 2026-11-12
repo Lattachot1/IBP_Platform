@@ -7,6 +7,8 @@ Writes come from the importers and are all-or-nothing:
   are left as they are
 - dry_run=True runs the same writes and rolls them back, so a preview also
   passes the database constraints
+- update_stock_row is a hand edit of one stock row (not an import); the
+  next import of the same date overwrites it again
 
 Without a database the memory store starts with the fictitious data of
 sample_data/mock/ (imported through the same parsers).
@@ -66,6 +68,23 @@ class MemoryPlanningStore:
             if not dry_run:
                 self._stock[snapshot_date] = (_now(), loaded_by, list(rows))
         return result
+
+    def update_stock_row(self, snapshot_date: date, material_no: str, tons: float) -> StockRow:
+        """A hand edit: one material's on-hand tons in an existing snapshot.
+
+        Raises ValueError for a missing snapshot date or material (the API
+        answers 404)."""
+        with self._lock:
+            entry = self._stock.get(snapshot_date)
+            if entry is None:
+                raise ValueError("no stock snapshot on %s" % snapshot_date)
+            rows = entry[2]
+            for i, row in enumerate(rows):
+                if row.material_no == material_no:
+                    updated = StockRow(material_no=material_no, on_hand_tons=tons)
+                    rows[i] = updated
+                    return updated
+        raise ValueError("%s is not in the stock snapshot of %s" % (material_no, snapshot_date))
 
     def _upsert(self, table: dict, records, key, dry_run) -> WriteResult:
         result = WriteResult()
@@ -184,6 +203,28 @@ class SqlPlanningStore:
                          (snapshot_date, row.material_no, row.on_hand_tons, loaded_by))
             _finish(conn, dry_run)
         return result
+
+    def update_stock_row(self, snapshot_date: date, material_no: str, tons: float) -> StockRow:
+        """A hand edit: one material's on-hand tons in an existing snapshot.
+
+        Raises ValueError for a missing snapshot date or material. The
+        ValueError must be raised outside the connection block, which would
+        otherwise wrap it into a StoreUnavailable."""
+        missing = None
+        with connection() as conn, conn.cursor() as cursor:
+            cursor.execute("SELECT COUNT(1) FROM dbo.StockSnapshots WHERE SnapshotDate = %s;", (snapshot_date,))
+            if not cursor.fetchone()[0]:
+                missing = "no stock snapshot on %s" % snapshot_date
+            else:
+                _execute(cursor, "UPDATE dbo.StockSnapshots SET OnHandTons = %s "
+                                 "WHERE SnapshotDate = %s AND MaterialNo = %s;",
+                         (tons, snapshot_date, material_no))
+                if not cursor.rowcount:
+                    missing = "%s is not in the stock snapshot of %s" % (material_no, snapshot_date)
+            _finish(conn, missing is not None)      # a miss rolls back
+        if missing:
+            raise ValueError(missing)
+        return StockRow(material_no=material_no, on_hand_tons=tons)
 
     def _merge(self, sql, params_list, dry_run) -> WriteResult:
         result = WriteResult()

@@ -110,6 +110,70 @@ function figuresOf(p: Product, views: PlanningViewsState) {
   return { onHand, inQcTons, openTons, nextDue };
 }
 
+/** The on-hand figure of a product: click to hand-edit it. The next import of
+ * the same snapshot date overwrites the edit again (the imported file is the truth). */
+function StockCell({ product, views }: { product: Product; views: PlanningViewsState }) {
+  const row = views.stock?.rows.find((r) => r.material_no === product.material_no);
+  const editable = !views.loading && !!views.stock?.snapshot_date && row !== undefined;
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  if (!editable) {
+    return <span className="font-mono">{views.loading ? '…' : row === undefined ? '—' : formatNumber(row.on_hand_tons)}</span>;
+  }
+  const short = row.on_hand_tons < product.min_stock_tons;
+  const save = async () => {
+    if (saving) return;
+    const tons = Number(value);
+    if (value.trim() === '' || !Number.isFinite(tons) || tons < 0) {
+      setError('On-hand stock must be a number of tons, 0 or more');
+      return;
+    }
+    if (tons === row.on_hand_tons) {
+      setEditing(false);
+      return;
+    }
+    setSaving(true);
+    const failure = await views.editStock(product.material_no, tons);
+    setSaving(false);
+    if (failure) setError(failure);
+    else setEditing(false);
+  };
+  if (editing) {
+    return (
+      <span className="inline-flex flex-col items-end gap-0.5">
+        <input
+          aria-label={`On-hand stock of ${product.material_no}`}
+          className={`${input} w-24 text-right`}
+          inputMode="decimal"
+          autoFocus
+          disabled={saving}
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void save();
+            if (e.key === 'Escape') setEditing(false);
+          }}
+          onBlur={() => { if (!error) void save(); }}
+        />
+        {error && <span role="alert" className="text-[10px] text-rose-600">{error}</span>}
+      </span>
+    );
+  }
+  return (
+    <button
+      type="button"
+      className={`font-mono hover:text-blue-600 hover:underline ${short ? 'text-rose-600 font-bold' : ''}`}
+      title="Click to edit the on-hand stock (the next import of this snapshot date overwrites it again)"
+      onClick={() => { setValue(String(row.on_hand_tons)); setError(null); setEditing(true); }}
+    >
+      {formatNumber(row.on_hand_tons)}
+    </button>
+  );
+}
+
 /** A small table inside an expanded row; scrollable so long lists stay compact. */
 function MiniTable({ caption, head, children, empty }: {
   caption: string; head: React.ReactNode; children: React.ReactNode[]; empty: string;
@@ -366,8 +430,8 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
                             value={draft.min_stock_tons} onChange={(e) => setDraft({ ...draft, min_stock_tons: e.target.value })} />
                         ) : formatNumber(p.min_stock_tons)}
                       </td>
-                      <td className={`py-2.5 px-4 text-right font-mono ${fig.onHand !== null && fig.onHand < p.min_stock_tons ? 'text-rose-600 font-bold' : ''}`}>
-                        {views.loading ? '…' : fig.onHand === null ? '—' : formatNumber(fig.onHand)}
+                      <td className="py-2.5 px-4 text-right">
+                        <StockCell product={p} views={views} />
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono">
                         {views.loading ? '…' : fig.inQcTons === 0 ? '—' : formatNumber(fig.inQcTons)}

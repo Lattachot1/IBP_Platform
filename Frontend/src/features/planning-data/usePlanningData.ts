@@ -15,6 +15,7 @@ import {
   listGroups,
   listProducts,
   updateProduct,
+  updateStock,
 } from './api';
 import type {
   Forecast,
@@ -198,7 +199,20 @@ export function usePlanningViews() {
     void refresh();
   }, [refresh]);
 
-  return { stock, lots, orders, forecasts, loading, error, refresh };
+  const snapshotDate = stock?.snapshot_date ?? null;
+  /** A hand edit of one stock row; resolves to an error message, or null when saved. */
+  const editStock = useCallback(async (materialNo: string, tons: number): Promise<string | null> => {
+    if (!snapshotDate) return 'No stock snapshot to edit';
+    try {
+      const row = await updateStock(snapshotDate, materialNo, tons);
+      setStock((s) => (s ? { ...s, rows: s.rows.map((r) => (r.material_no === materialNo ? row : r)) } : s));
+      return null;
+    } catch (err) {
+      return describeFailure(err);
+    }
+  }, [snapshotDate]);
+
+  return { stock, lots, orders, forecasts, loading, error, refresh, editStock };
 }
 
 export type PlanningViewsState = ReturnType<typeof usePlanningViews>;

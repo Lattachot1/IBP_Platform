@@ -11,7 +11,8 @@ and a report naming each line and column; a good file answers 200 with
 how many rows were inserted / updated (dry_run=true: what would happen,
 nothing is kept). Materials must already be in the product master.
 
-No login yet (roadmap step 5): anyone who can reach the backend can import.
+No login yet (roadmap step 5): anyone who can reach the backend can import
+or hand-edit stock.
 """
 
 import logging
@@ -21,10 +22,11 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from optimization.engine import plant_groups
 from planning_data import imports, products, store
-from planning_data.records import Forecast, QcLot, SalesOrder, StockSnapshot
+from planning_data.records import Forecast, QcLot, SalesOrder, StockRow, StockSnapshot
 from planning_data.sql import StoreUnavailable, WriteRejected
 
 log = logging.getLogger("ibp.api.planning")
@@ -137,6 +139,30 @@ async def handle_import_forecasts(request: Request, dry_run: bool = False, updat
             parsed.records, updated_by, dry_run=dry_run))
 
     return await run_in_threadpool(run)
+
+
+# ----------------------------------------------------------------------------
+# hand edit
+# ----------------------------------------------------------------------------
+class StockUpdate(BaseModel):
+    tons: float = Field(ge=0)
+
+
+@router.patch("/api/v1/stock/{stock_date}/{material_no}", response_model=StockRow)
+def handle_update_stock(stock_date: date, material_no: str, req: StockUpdate) -> StockRow:
+    """Hand-edit one material's on-hand tons in an existing snapshot (a
+    correction the SAP file does not have yet). One column, one truth: the
+    next import of the same date overwrites the edit again, so re-importing
+    the file is the way back to the imported value."""
+    key = material_no.strip().upper()
+    if key not in _product_index():
+        raise HTTPException(status_code=422, detail="%s is not in the product master" % key)
+    try:
+        return store.get_store().update_stock_row(stock_date, key, req.tons)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except StoreUnavailable:
+        raise _unavailable("could not update the stock row")
 
 
 # ----------------------------------------------------------------------------

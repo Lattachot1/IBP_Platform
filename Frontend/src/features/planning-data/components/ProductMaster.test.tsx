@@ -35,6 +35,7 @@ const views = (overrides: Partial<PlanningViewsState> = {}): PlanningViewsState 
   loading: false,
   error: null,
   refresh: vi.fn().mockResolvedValue(undefined),
+  editStock: vi.fn().mockResolvedValue(null),
   ...overrides,
 });
 
@@ -83,6 +84,37 @@ describe('ProductMaster', () => {
     renderMaster();
     expect(within(row('990101')).getByText('90').className).toContain('text-rose-600');
     expect(within(row('990101')).getByText('100')).toBeTruthy();
+  });
+
+  it('hand-edits the on-hand stock and saves on Enter', async () => {
+    const editStock = vi.fn().mockResolvedValue(null);
+    renderMaster({ editStock });
+    fireEvent.click(within(row('990101')).getByText('90'));
+    const input = screen.getByLabelText('On-hand stock of 990101') as HTMLInputElement;
+    expect(input.value).toBe('90');
+    fireEvent.change(input, { target: { value: '120' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(editStock).toHaveBeenCalledWith('990101', 120));
+  });
+
+  it('keeps the editor open with the error for invalid tons and Escape cancels', async () => {
+    const editStock = vi.fn();
+    renderMaster({ editStock });
+    fireEvent.click(within(row('990101')).getByText('90'));
+    const input = screen.getByLabelText('On-hand stock of 990101');
+    fireEvent.change(input, { target: { value: '-5' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(screen.getByRole('alert').textContent).toContain('0 or more');
+    expect(editStock).not.toHaveBeenCalled();
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByLabelText('On-hand stock of 990101')).toBeNull();
+  });
+
+  it('is not editable without a stock snapshot', () => {
+    renderMaster({ stock: { snapshot_date: null, loaded_at: null, loaded_by: null,
+      rows: [{ material_no: '990101', on_hand_tons: 90 }] } });
+    fireEvent.click(within(row('990101')).getByText('90'));
+    expect(screen.queryByLabelText('On-hand stock of 990101')).toBeNull();
   });
 
   it('shows a dash for products without planning data', () => {

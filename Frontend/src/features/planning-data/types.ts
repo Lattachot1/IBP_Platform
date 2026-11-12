@@ -53,11 +53,16 @@ export interface ImportReport {
   replaced?: number;
 }
 
+export interface StockRow {
+  material_no: string;
+  on_hand_tons: number;
+}
+
 export interface StockSnapshot {
   snapshot_date: string | null;
   loaded_at: string | null;
   loaded_by: string | null;
-  rows: { material_no: string; on_hand_tons: number }[];
+  rows: StockRow[];
 }
 
 export interface QcLot {

@@ -6,6 +6,7 @@ store; the SQL store is exercised against a fake connection (CI has no
 SQL Server).
 """
 
+from datetime import date
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,7 @@ from fastapi.testclient import TestClient
 import database
 import main
 from planning_data import imports, products, store
+from planning_data.records import StockRow
 from planning_data.sql import WriteRejected
 
 client = TestClient(main.app)
@@ -362,3 +364,49 @@ def test_sql_stock_replace_reports_the_deleted_rows(monkeypatch):
     assert (result.inserted, result.replaced) == (13, 3)
     assert conn.executed[0].startswith("DELETE FROM dbo.StockSnapshots")
     assert conn.committed
+
+
+# ----------------------------------------------------------------------------
+# hand edits of stock rows
+# ----------------------------------------------------------------------------
+def test_stock_row_can_be_hand_edited_until_the_next_import():
+    post("stock", 'Stock Date,Material Number,Unrestricted\n2026/11/06,990101,5\n')
+    edited = client.patch("/api/v1/stock/2026-11-06/990101", json={"tons": 10})
+    assert edited.status_code == 200
+    assert edited.json() == {"material_no": "990101", "on_hand_tons": 10}
+    assert client.get("/api/v1/stock").json()["rows"][0]["on_hand_tons"] == 10
+    # the next import of the same date resets the edit to the imported value
+    post("stock", 'Stock Date,Material Number,Unrestricted\n2026/11/06,990101,5\n')
+    assert client.get("/api/v1/stock").json()["rows"][0]["on_hand_tons"] == 5
+
+
+def test_hand_edit_rejections():
+    post("stock", 'Stock Date,Material Number,Unrestricted\n2026/11/06,990101,5\n')
+    unknown = client.patch("/api/v1/stock/2026-11-06/999999", json={"tons": 1})
+    assert unknown.status_code == 422 and "product master" in unknown.json()["detail"]
+    wrong_day = client.patch("/api/v1/stock/2026-11-01/990101", json={"tons": 1})
+    assert wrong_day.status_code == 404 and "no stock snapshot" in wrong_day.json()["detail"]
+    not_there = client.patch("/api/v1/stock/2026-11-06/990202", json={"tons": 1})
+    assert not_there.status_code == 404 and "not in the stock snapshot" in not_there.json()["detail"]
+    assert client.patch("/api/v1/stock/2026-11-06/990101", json={"tons": -1}).status_code == 422
+    assert client.get("/api/v1/stock").json()["rows"][0]["on_hand_tons"] == 5      # nothing changed
+
+
+def test_sql_stock_hand_edit_commits(monkeypatch):
+    conn = FakeConnection(actions=[1])                 # COUNT(1): the snapshot exists
+    monkeypatch.setattr(database, "_conn_params", {"server": "fake"})
+    monkeypatch.setattr(database, "open_connection", lambda: conn)
+    row = store.SqlPlanningStore().update_stock_row(date(2026, 11, 6), "990101", 10)
+    assert row == StockRow(material_no="990101", on_hand_tons=10)
+    assert conn.executed[0].startswith("SELECT COUNT(1)")
+    assert conn.executed[1].startswith("UPDATE dbo.StockSnapshots")
+    assert (conn.committed, conn.rolled_back) == (True, False)
+
+
+def test_sql_stock_hand_edit_on_a_missing_date_rolls_back(monkeypatch):
+    conn = FakeConnection(actions=[0])                 # COUNT(1) = 0: no snapshot that day
+    monkeypatch.setattr(database, "_conn_params", {"server": "fake"})
+    monkeypatch.setattr(database, "open_connection", lambda: conn)
+    with pytest.raises(ValueError):
+        store.SqlPlanningStore().update_stock_row(date(2026, 11, 6), "990101", 10)
+    assert (conn.committed, conn.rolled_back, conn.closed) == (False, True, True)
