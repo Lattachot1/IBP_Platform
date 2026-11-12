@@ -406,7 +406,7 @@ def attach_free(inputs: PlanInputs, prod, grades: List[str], caps: List[int]) ->
             gap = minimum - _t(base[d])
             if minimum > 0 and gap > 0:
                 if ready:
-                    below = max(0, min(minimum, gap - late))
+                    below = max(0, min(minimum, gap - sum(ready) - late))
                     below_terms.append(below)
                 else:
                     below = max(0, min(minimum, gap - late))

@@ -43,3 +43,16 @@ def test_evaluated_orders_and_kpis_shape(solved_and_draft):
         assert key in kpis
     for order in ev["planning"]["orders"]:
         assert {"order_no", "due_date", "ready_date", "status"} <= set(order)
+
+
+def test_evaluated_plan_carries_the_planning_checks(solved_and_draft):
+    # Edit mode used to drop the planning check lines, so a hand-edited plan
+    # could ship orders late without any warning while a solve did flag them.
+    req, solved, draft = solved_and_draft
+    ev = manual.evaluate({**req, **draft})
+
+    def orders_checks(res):
+        return [c for c in res["checks"] if "orders" in c["text"]]
+
+    assert orders_checks(solved), "a solved planning plan lists its orders check"
+    assert orders_checks(ev), "the same check must survive a hand edit"

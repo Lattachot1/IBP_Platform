@@ -5,9 +5,13 @@ the optimizer. They are stable across phases: the Phase 2 CP-SAT engine
 must fill exactly this response.
 """
 
-from typing import Dict, List, Literal, Optional
+from typing import Annotated, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
+
+# A grade's demand in tons (0 allowed); the values land in CP-SAT as integer
+# upper bounds, so a negative one would crash the model build — 422 instead.
+Tons = Annotated[float, Field(ge=0)]
 
 
 class InitialState(BaseModel):
@@ -23,7 +27,7 @@ class OptimizeRequest(BaseModel):
     horizon_days: int = Field(default=28, ge=7, le=120)
     start_date: str = ""        # ISO date; "" = next Monday
     objective: str = "maximize_fulfilled"
-    demand: Optional[Dict[str, float]] = None   # tons per grade; None = defaults
+    demand: Optional[Dict[str, Tons]] = None   # tons per grade; None = defaults
     holidays: List[str] = Field(default_factory=list)   # ISO dates, company holidays
     time_limit_s: int = Field(default=30, ge=5, le=300)
     # Solver search workers: 8 is fast, 1 is deterministic (the self-test
@@ -36,7 +40,7 @@ class OptimizeRequest(BaseModel):
     # Tons per product (SAP material) for the groups the planner broke down;
     # each such group's demand becomes the sum of its products. Ignored with
     # use_planning_data. See optimization/product_split.py
-    product_demand: Optional[Dict[str, float]] = None
+    product_demand: Optional[Dict[str, Tons]] = None
 
 
 # ---- hand-edited plan (editable Gantt) → POST /api/v1/optimize/evaluate ----

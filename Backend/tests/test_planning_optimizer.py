@@ -190,6 +190,20 @@ def test_minimum_stock_is_refilled(monkeypatch):
     assert a["days_below_min"] <= 6                 # only until the first output clears QC
 
 
+def test_attach_free_counts_ready_output_against_below_min():
+    # 100 t made on day 0 clears QC on day 5. The 50 t order due day 1 dips
+    # the stock to -50, so day 5 sits 50 t below the 100 t minimum - not 100 t:
+    # the ready output already refills it. This must match the CP-SAT
+    # constraint `below >= gap - sum(ready) - late`, i.e. solve == evaluate.
+    inputs = build([product("A", minimum=100)], snapshot(START, A=0),
+                   orders=[order("1", "A", 50, date(2026, 11, 10))], horizon=14)
+    prod = [{0: 100 if d == 0 else 0} for d in range(14)]   # grade-index keyed, every day
+    pm = planning.attach_free(inputs, prod, ["BR150"], {"BR150": 500})
+    below_by_day = dict(pm.products[0].below_min)
+    assert below_by_day[1] == 100                   # nothing out of QC yet
+    assert below_by_day[5] == 50 and below_by_day[6] == 50
+
+
 def test_report_carries_requirement_and_shortage_per_product(monkeypatch):
     # requirement = orders due in the horizon + minimum stock + forecast share
     # - starting stock - lots in QC; shortage = the part the plan cannot produce

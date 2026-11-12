@@ -162,6 +162,11 @@ def _attach_planning(result: dict, cfg: dict, req: dict) -> None:
     dates = [date.fromisoformat(day["iso"]) for day in days]
     section = planning.report(plan_model, lambda v: v, dates)
     result["planning"] = section["planning"]
+    planned_groups = {product.group for product in inputs.products}
+    produced = {g: sum(prod[d].get(g, 0) for d in range(H)) for g in grades}
+    result["planning"]["unallocated_tons"] = {
+        g: produced[g] for g in grades if g not in planned_groups and produced[g] > 0}
+    result["checks"].extend(planning.checks(result["planning"]))
     for d, alloc in enumerate(section["alloc_by_day"]):
         if alloc:
             days[d]["products"] = [{"material_no": m, "tons": t} for m, t in sorted(alloc.items())]
