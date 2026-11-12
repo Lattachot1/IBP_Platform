@@ -32,22 +32,23 @@ if "%MSSQL_SA_PASSWORD%"=="" (
 set "DATABASE_URL=sqlserver://ibp_app:%IBP_APP_PASSWORD%@localhost:1433?database=IBP_DB"
 
 REM --- 1. make sure the Docker daemon is running ---
+REM      no "goto" into a parenthesized block: cmd expands %tries% when it
+REM      parses the whole block, before the set inside has ever run
 docker info >nul 2>&1
-if errorlevel 1 (
-  echo Starting Docker Desktop - first start can take a minute...
-  start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
-  set /a tries=0
-  :waitdocker
-  timeout /t 3 /nobreak >nul
-  docker info >nul 2>&1
-  if errorlevel 1 (
-    set /a tries+=1
-    if %tries% lss 60 goto waitdocker
-    echo Docker did not start in time. Open Docker Desktop manually, then run this file again.
-    pause
-    exit /b 1
-  )
-)
+if not errorlevel 1 goto dockerready
+echo Starting Docker Desktop - first start can take a minute...
+start "" "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+set /a tries=0
+:waitdocker
+timeout /t 3 /nobreak >nul
+docker info >nul 2>&1
+if not errorlevel 1 goto dockerready
+set /a tries+=1
+if %tries% lss 60 goto waitdocker
+echo Docker did not start in time. Open Docker Desktop manually, then run this file again.
+pause
+exit /b 1
+:dockerready
 echo [1/4] Docker is ready.
 
 REM --- 2. start only the database + one-shot schema init ---
