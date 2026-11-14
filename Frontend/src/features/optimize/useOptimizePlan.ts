@@ -411,8 +411,6 @@ export function useOptimizePlan() {
   // results would silently stop matching the plan).
   const editBlockedReason = !data || data.days.length === 0 || offline || phase === 'stale' || phase === 'sample'
     ? 'Needs a live backend result to check the rules'
-    : data.planning
-    ? 'Hand edits are not available yet for a plan built from the planning data'
     : null;
   const canEdit = editBlockedReason === null;
   const gridCols = `${LABEL_W}px repeat(${Math.max(1, view?.days.length ?? 1)}, ${CELL_W}px)`;

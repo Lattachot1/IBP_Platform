@@ -53,11 +53,25 @@ export interface ImportReport {
   replaced?: number;
 }
 
+export interface StockRow {
+  material_no: string;
+  on_hand_tons: number;
+}
+
+/** A hand-entered on-hand figure; the plan uses it instead of the imported value. */
+export interface StockAdjustment {
+  material_no: string;
+  adjust_tons: number;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+
 export interface StockSnapshot {
   snapshot_date: string | null;
   loaded_at: string | null;
   loaded_by: string | null;
-  rows: { material_no: string; on_hand_tons: number }[];
+  rows: StockRow[];
+  adjustments: StockAdjustment[];
 }
 
 export interface QcLot {

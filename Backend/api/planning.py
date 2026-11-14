@@ -11,7 +11,8 @@ and a report naming each line and column; a good file answers 200 with
 how many rows were inserted / updated (dry_run=true: what would happen,
 nothing is kept). Materials must already be in the product master.
 
-No login yet (roadmap step 5): anyone who can reach the backend can import.
+No login yet (roadmap step 5): anyone who can reach the backend can import
+stock or hand-enter stock adjustments.
 """
 
 import logging
@@ -21,10 +22,11 @@ from typing import List, Literal, Optional
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, Field
 
 from optimization.engine import plant_groups
 from planning_data import imports, products, store
-from planning_data.records import Forecast, QcLot, SalesOrder, StockSnapshot
+from planning_data.records import Forecast, QcLot, SalesOrder, StockAdjustment, StockSnapshot
 from planning_data.sql import StoreUnavailable, WriteRejected
 
 log = logging.getLogger("ibp.api.planning")
@@ -140,11 +142,35 @@ async def handle_import_forecasts(request: Request, dry_run: bool = False, updat
 
 
 # ----------------------------------------------------------------------------
+# hand-entered stock
+# ----------------------------------------------------------------------------
+class StockAdjustmentUpdate(BaseModel):
+    tons: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
+
+
+@router.put("/api/v1/stock-adjustments/{material_no}", response_model=Optional[StockAdjustment])
+def handle_set_stock_adjustment(material_no: str, req: StockAdjustmentUpdate,
+                                updated_by: str = _editor()) -> Optional[StockAdjustment]:
+    """Hand-enter one material's on-hand stock: the planner's corrected
+    figure, used instead of the imported snapshot value and also when no
+    snapshot has been imported at all (e.g. before the SAP feed arrives).
+    `tons: null` clears the adjustment back to the imported value."""
+    key = material_no.strip().upper()
+    if key not in _product_index():
+        raise HTTPException(status_code=422, detail="%s is not in the product master" % key)
+    try:
+        return store.get_store().set_stock_adjustment(key, req.tons, updated_by)
+    except StoreUnavailable:
+        raise _unavailable("could not save the stock adjustment")
+
+
+# ----------------------------------------------------------------------------
 # reads
 # ----------------------------------------------------------------------------
 @router.get("/api/v1/stock", response_model=StockSnapshot)
 def handle_read_stock(on: Optional[date] = None) -> StockSnapshot:
-    """The latest stock snapshot (on or before `on` when given)."""
+    """The latest stock snapshot (on or before `on` when given) plus every
+    hand-entered stock adjustment."""
     try:
         return store.get_store().stock_snapshot(on)
     except StoreUnavailable:

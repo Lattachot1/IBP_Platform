@@ -18,6 +18,9 @@ export interface GradeModel {
   trained_through: string;
   interval_level_pct: number;
   coverage_empirical: number | null;
+  champion_long?: string | null;
+  wape_long?: number | null;
+  mase_long?: number | null;
 }
 
 export interface ModelsResponse {
@@ -38,6 +41,12 @@ export interface ForecastResponse {
   total_forecast_tons: number;
   demand_change_pct: number;
   model_name: string;
+  orders?: {
+    group: string;
+    periods: string[];
+    due_tons: number[];
+    coverage_pct: (number | null)[];
+  } | null;
   interval: {
     level_pct: number;
     method: string;

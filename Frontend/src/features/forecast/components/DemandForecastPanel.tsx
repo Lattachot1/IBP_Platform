@@ -264,7 +264,7 @@ export function DemandForecastPanel() {
 
         {/* Summary cards */}
         {forecast && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="rounded-xl border border-blue-200 bg-blue-50/60 p-4">
               <div className="flex items-center justify-between text-slate-500 mb-1.5">
                 <span className="text-xs font-semibold uppercase tracking-wider">
@@ -315,6 +315,30 @@ export function DemandForecastPanel() {
                   : ''}
               </div>
             </div>
+
+            {forecast.orders && (
+              <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-4">
+                <div className="flex items-center justify-between text-slate-500 mb-1.5">
+                  <span className="text-xs font-semibold uppercase tracking-wider">
+                    Open Orders ({horizon} mo)
+                  </span>
+                  <Package className="w-4 h-4 text-amber-600" />
+                </div>
+                <div className="flex items-baseline gap-1.5">
+                  <span className="text-2xl font-black text-slate-900 font-mono">
+                    {formatRounded(forecast.orders.due_tons.reduce((a, b) => a + b, 0))}
+                  </span>
+                  <span className="text-xs text-slate-500">ton</span>
+                </div>
+                <div className="text-[11px] text-slate-500 mt-1.5">
+                  already ordered by customers
+                  {forecast.total_forecast_tons > 0 && (() => {
+                    const due = forecast.orders!.due_tons.reduce((a, b) => a + b, 0);
+                    return <> · covers {((due / forecast.total_forecast_tons) * 100).toFixed(0)}% of the forecast</>;
+                  })()}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

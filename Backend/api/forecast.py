@@ -29,7 +29,7 @@ forecast_engine: Optional[dict] = None
 # Background training state: idle | training | failed (engine None + failed = why)
 _training = {"state": "idle", "started_at": None, "error": None}
 # Bump after any change to the training pipeline so old caches are dropped
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 
 def _cache_path() -> Path:
@@ -201,6 +201,9 @@ def handle_models():
             "trained_through": info["trained_through"],
             "interval_level_pct": info["interval_level_pct"],
             "coverage_empirical": _round_or_none(info["coverage_empirical"], 3),
+            "champion_long": info.get("champion_long"),
+            "wape_long": _round_or_none(info["wape_long"], 4) if info.get("wape_long") is not None else None,
+            "mase_long": _round_or_none(info["mase_long"], 3) if info.get("mase_long") is not None else None,
         })
     return {"trained_at": engine["trained_at"], "models": rows}
 
@@ -255,6 +258,40 @@ def handle_forecast(
     result = service.forecast(info, horizon_months, demand_change_pct)
     forecast_rounded = [round(float(v), 1) for v in result["forecast_tons"]]
 
+    # Open-orders overlay: how much of each forecast month the planner's own
+    # order book already covers. Information only - in planning mode the
+    # solver consumes the orders itself, so they never enter the model, and
+    # the forecast stays a pure time-series answer.
+    orders_section = None
+    try:
+        from optimization.engine import plant_groups
+        from planning_data import products as products_mod
+        from planning_data import store as planning_store
+        from planning_data.engine_forecast import group_of_grade
+
+        group = group_of_grade(product_id, [g["id"] for g in plant_groups()])
+        if group:
+            members = {p.material_no for p in products_mod.get_store().list(active=True)
+                       if p.group_code == group}
+            due = {period: 0.0 for period in result["periods"]}
+            for order in planning_store.get_store().sales_orders(status="open"):
+                if order.material_no in members:
+                    month = str(order.due_date)[:7]
+                    if month in due:
+                        due[month] += max(0.0, float(order.open_tons))
+            orders_section = {
+                "group": group,
+                "periods": result["periods"],
+                "due_tons": [round(due[p], 1) for p in result["periods"]],
+                "coverage_pct": [
+                    round(due[p] / forecast_rounded[i] * 100.0, 1)
+                    if forecast_rounded[i] > 0 else None
+                    for i, p in enumerate(result["periods"])
+                ],
+            }
+    except Exception as exc:
+        log.info("[Forecast] orders overlay skipped: %s", exc)
+
     return {
         "product_id": product_id,
         "basis": "monthly tonnage from Billing Date, net of returns",
@@ -274,6 +311,7 @@ def handle_forecast(
                       "beyond it a conservative sqrt(h) extrapolation; band scales with the scenario uplift",
             "coverage_empirical": round(info["coverage_empirical"], 3),
         },
+        "orders": orders_section,
         "metrics": {
             "wape": _round_or_none(info["wape"], 4),
             "mase": _round_or_none(info["mase"], 3),

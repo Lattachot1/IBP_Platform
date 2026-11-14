@@ -15,6 +15,7 @@ import {
   listGroups,
   listProducts,
   updateProduct,
+  setStockAdjustment as putStockAdjustment,
 } from './api';
 import type {
   Forecast,
@@ -198,7 +199,23 @@ export function usePlanningViews() {
     void refresh();
   }, [refresh]);
 
-  return { stock, lots, orders, forecasts, loading, error, refresh };
+  /** Hand-enter one material's stock (null clears it back to the imported
+   * value); resolves to an error message, or null when saved. */
+  const setStockAdjustment = useCallback(async (materialNo: string, tons: number | null): Promise<string | null> => {
+    try {
+      const row = await putStockAdjustment(materialNo, tons);
+      setStock((s) => {
+        if (!s) return s;
+        const others = s.adjustments.filter((a) => a.material_no !== materialNo);
+        return { ...s, adjustments: row ? [...others, row] : others };
+      });
+      return null;
+    } catch (err) {
+      return describeFailure(err);
+    }
+  }, []);
+
+  return { stock, lots, orders, forecasts, loading, error, refresh, setStockAdjustment };
 }
 
 export type PlanningViewsState = ReturnType<typeof usePlanningViews>;

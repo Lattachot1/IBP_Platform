@@ -137,7 +137,7 @@ describe('useOptimizePlan with planning data', () => {
     await act(() => result.current.run());
     expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1].body)).use_planning_data).toBe(true);
     expect(result.current.data?.planning?.kpis.orders_late).toBe(1);
-    expect(result.current.canEdit).toBe(false);
-    expect(result.current.editBlockedReason).toMatch(/planning data/);
+    expect(result.current.canEdit).toBe(true);
+    expect(result.current.editBlockedReason).toBeNull();
   });
 });

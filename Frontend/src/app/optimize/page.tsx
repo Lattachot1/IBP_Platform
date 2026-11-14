@@ -11,6 +11,7 @@ import { PlanInputRail } from '@/features/optimize/components/PlanInputRail';
 import { PlanTooltip } from '@/features/optimize/components/PlanTooltip';
 import { PlanningKpiStrip, PlanningPanels } from '@/features/optimize/components/PlanningPanels';
 import { ProductionGantt } from '@/features/optimize/components/ProductionGantt';
+import { ProductOrderPanel } from '@/features/optimize/components/ProductOrderPanel';
 import { QuickScenarios } from '@/features/optimize/components/QuickScenarios';
 import { StageHeader } from '@/features/optimize/components/StageHeader';
 import { useOptimizePlan } from '@/features/optimize/useOptimizePlan';
@@ -38,6 +39,7 @@ export default function OptimizePage() {
             <KpiStrip plan={plan} view={view} />
             {view.planning && <PlanningKpiStrip planning={view.planning} />}
             <ProductionGantt plan={plan} data={data} view={view} />
+            <ProductOrderPanel plan={plan} view={view} />
             <PlanningPanels view={view} grades={plan.grades} />
             <FulfillmentPanel view={view} />
             <ConstraintChecks plan={plan} view={view} />

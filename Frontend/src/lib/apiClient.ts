@@ -63,6 +63,15 @@ export function patchJson<T>(path: string, body: unknown, options: CallOptions =
   );
 }
 
+/** PUT a JSON body (an upsert: create or replace); same errors as getJson. */
+export function putJson<T>(path: string, body: unknown, options: CallOptions = {}): Promise<T> {
+  return call<T>(
+    path,
+    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) },
+    options,
+  );
+}
+
 /** POST a raw body (e.g. an uploaded CSV file, sent byte for byte); same errors as getJson. */
 export function postRaw<T>(path: string, body: Blob | string, contentType: string, options: CallOptions = {}): Promise<T> {
   return call<T>(path, { method: 'POST', headers: { 'Content-Type': contentType }, body }, options);

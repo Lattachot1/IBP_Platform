@@ -17,8 +17,9 @@ planning data (planning_data.store): released stock, lots in QC, open
 orders, the monthly group forecast and the product master.
 
 Stock logic per product and day d (tons, d = 0 is the plan start):
-  available(d) = stock at the snapshot + QC releases up to d
-                 + production up to d - qc_days - open orders due up to d
+  available(d) = starting stock (the hand-entered adjustment when there is
+                 one, else the imported snapshot value) + QC releases up
+                 to d + production up to d - qc_days - open orders due up to d
 Orders due before the plan start count as due on day 0. Output enters
 stock qc_days after it is produced, so production in the last qc_days of
 the horizon only serves the forecast tier.
@@ -135,11 +136,21 @@ def build_inputs(groups: List[str], products, snapshot, lots, orders, forecasts,
             warnings.append("Inactive product %s still has open orders: they are planned" % p.material_no)
     known = {p.material_no for p in planned}
 
-    # stock snapshot
+    # stock snapshot; a hand-entered adjustment wins over the imported value
+    # (and stands alone when nothing has been imported yet)
     snapshot_date = snapshot.snapshot_date
     stock = {r.material_no: r.on_hand_tons for r in snapshot.rows} if snapshot_date else {}
+    adjusted = {a.material_no: a.adjust_tons for a in snapshot.adjustments if a.material_no in known}
+    stock.update(adjusted)
     if snapshot_date is None:
-        warnings.append("No stock snapshot on or before %s: starting stock taken as 0" % start)
+        if adjusted:
+            warnings.append("No stock snapshot on or before %s: %d materials use hand-entered stock, "
+                            "the rest start at 0" % (start, len(adjusted)))
+        else:
+            warnings.append("No stock snapshot on or before %s: starting stock taken as 0" % start)
+    elif adjusted:
+        warnings.append("%d materials use hand-entered stock instead of the snapshot of %s"
+                        % (len(adjusted), snapshot_date))
     elif (start - snapshot_date).days > STALE_STOCK_DAYS:
         warnings.append("Stock snapshot is %d days old (%s)" % ((start - snapshot_date).days, snapshot_date))
 
@@ -353,6 +364,76 @@ def objective_terms(plan: PlanModel):
     """Linear penalty (to subtract from the maximized objective)."""
     return (W_LATE * sum(plan.late_terms) + W_BELOW_MIN * sum(plan.below_terms)
             + W_FORECAST * sum(plan.forecast_terms) + W_LOOKAHEAD * sum(plan.lookahead_terms))
+
+
+def attach_free(inputs: PlanInputs, prod, grades: List[str], caps: List[int]) -> PlanModel:
+    """PlanModel with plain-integer product allocs derived from a GIVEN
+    per-day group production (the hand-edited plan) - no CP-SAT model.
+
+    Each day's group output is split across the group's products by order
+    share, largest remainder first, so the whole tons always add back to
+    the day's total. Everything report() reads (base curves, late / below /
+    forecast shortfalls) is recomputed as ints, mirroring attach().
+    """
+    H, Q = inputs.horizon, inputs.qc_days
+    gi = {g: i for i, g in enumerate(grades)}
+    product_vars: List[ProductVars] = []
+    for group, members in inputs.by_group().items():
+        shares = {p.material_no: p.share for p in members}
+        allocs: Dict[str, List[int]] = {p.material_no: [0] * H for p in members}
+        for d in range(H):
+            total = int(prod[d][gi[group]])
+            ideal = [(total * shares[p.material_no], p.material_no) for p in members]
+            whole = {m: int(f) for f, m in ideal}
+            left = total - sum(whole.values())
+            order = sorted(ideal, key=lambda fm: (-(fm[0] - whole[fm[1]]), fm[1]))
+            for k in range(left):
+                whole[order[k % len(order)][1]] += 1
+            for m in allocs:
+                allocs[m][d] = whole[m]
+        for p in members:
+            receipts = _cumulative(p.receipts, H)
+            orders_cum = _cumulative(p.demand, H)
+            base = [p.start_stock + receipts[d] - orders_cum[d] for d in range(H)]
+            product_vars.append(ProductVars(p, allocs[p.material_no], base))
+
+    late_terms, below_terms, forecast_terms, lookahead_terms = [], [], [], []
+    late_const = below_const = 0
+    for pv in product_vars:
+        p, alloc, base = pv.product, pv.alloc, pv.base
+        minimum = _t(p.min_stock)
+        for d in range(H):
+            ready = [alloc[t] for t in range(d - Q + 1)]      # produced by d - Q, in stock on d
+            shortfall = _t(-base[d])
+            late = 0
+            if shortfall > 0:
+                if ready:
+                    late = max(0, shortfall - sum(ready))
+                    late_terms.append(late)
+                else:
+                    late = shortfall
+                    late_const += shortfall
+                pv.late.append((d, late))
+            gap = minimum - _t(base[d])
+            if minimum > 0 and gap > 0:
+                if ready:
+                    below = max(0, min(minimum, gap - sum(ready) - late))
+                    below_terms.append(below)
+                else:
+                    below = max(0, min(minimum, gap - late))
+                    below_const += below
+                pv.below_min.append((d, below))
+        expected_cum = 0.0
+        for deadline in sorted(p.expected):
+            expected_cum += p.expected[deadline]
+            need = _t(expected_cum + p.min_stock - base[deadline])
+            if need <= 0:
+                continue
+            short = max(0, need - sum(alloc[t] for t in range(deadline + 1)))
+            forecast_terms.append(short)
+            pv.forecast_short.append((deadline, short, expected_cum))
+    return PlanModel(inputs, product_vars, late_terms, late_const, below_terms, below_const,
+                     forecast_terms, lookahead_terms)
 
 
 # ----------------------------------------------------------------------------

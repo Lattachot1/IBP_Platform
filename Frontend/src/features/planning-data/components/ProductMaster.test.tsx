@@ -28,13 +28,15 @@ const product = (material_no: string, group_code: string, overrides: Partial<Pro
 });
 
 const views = (overrides: Partial<PlanningViewsState> = {}): PlanningViewsState => ({
-  stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data', rows: [{ material_no: '990101', on_hand_tons: 90 }] },
+  stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data',
+    rows: [{ material_no: '990101', on_hand_tons: 90 }], adjustments: [] },
   lots: [{ lot_no: 'L1', material_no: '990101', tons: 40, produced_date: '2026-11-01', release_date: '2026-11-06', status: 'in_qc' }],
   orders: [{ order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open' }],
   forecasts: [{ group_code: 'BR150', forecast_month: '2026-12-01', source: 'manual', tons: 2600, updated_by: 'Planner A' }],
   loading: false,
   error: null,
   refresh: vi.fn().mockResolvedValue(undefined),
+  setStockAdjustment: vi.fn().mockResolvedValue(null),
   ...overrides,
 });
 
@@ -85,9 +87,66 @@ describe('ProductMaster', () => {
     expect(within(row('990101')).getByText('100')).toBeTruthy();
   });
 
+  it('hand-enters the stock adjustment in the row editor and saves it on Save', async () => {
+    const setStockAdjustment = vi.fn().mockResolvedValue(null);
+    renderMaster({ setStockAdjustment });
+    fireEvent.click(within(row('990101')).getByText('Edit'));
+    const input = screen.getByLabelText('Stock adjust of 990101') as HTMLInputElement;
+    expect(input.value).toBe('');                          // no adjustment yet: the dash shows
+    fireEvent.change(input, { target: { value: '120' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(setStockAdjustment).toHaveBeenCalledWith('990101', 120));
+  });
+
+  it('marks an active adjustment and keeps the imported stock visible', () => {
+    renderMaster({ stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data',
+      rows: [{ material_no: '990101', on_hand_tons: 90 }],
+      adjustments: [{ material_no: '990101', adjust_tons: 150, updated_at: null, updated_by: 'planner' }] } });
+    expect(screen.getByText(/1 hand adjustment active/)).toBeTruthy();
+    expect(within(row('990101')).getByText('90')).toBeTruthy();       // the import stays visible
+    expect(within(row('990101')).getByText('150').className).toContain('font-bold');   // the adjustment wins
+  });
+
+  it('keeps the editor open with the error for invalid tons and Cancel discards', async () => {
+    const setStockAdjustment = vi.fn();
+    renderMaster({ setStockAdjustment });
+    fireEvent.click(within(row('990101')).getByText('Edit'));
+    const input = screen.getByLabelText('Stock adjust of 990101');
+    fireEvent.change(input, { target: { value: '-5' } });
+    fireEvent.click(screen.getByText('Save'));
+    expect((await screen.findByRole('alert')).textContent).toContain('Stock adjust must be a number of tons');
+    expect(setStockAdjustment).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText('Cancel'));
+    expect(screen.queryByLabelText('Stock adjust of 990101')).toBeNull();
+  });
+
+  it('clears the adjustment back to the imported value', async () => {
+    const setStockAdjustment = vi.fn().mockResolvedValue(null);
+    renderMaster({ stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data',
+      rows: [{ material_no: '990101', on_hand_tons: 90 }],
+      adjustments: [{ material_no: '990101', adjust_tons: 150, updated_at: null, updated_by: 'planner' }] },
+      setStockAdjustment });
+    fireEvent.click(within(row('990101')).getByText('Edit'));
+    const input = screen.getByLabelText('Stock adjust of 990101') as HTMLInputElement;
+    expect(input.value).toBe('150');                       // pre-filled with the current adjustment
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(setStockAdjustment).toHaveBeenCalledWith('990101', null));
+  });
+
+  it('hand-enters stock even when no snapshot has been imported', async () => {
+    const setStockAdjustment = vi.fn().mockResolvedValue(null);
+    renderMaster({ stock: { snapshot_date: null, loaded_at: null, loaded_by: null, rows: [], adjustments: [] },
+      setStockAdjustment });
+    fireEvent.click(within(row('990101')).getByText('Edit'));
+    fireEvent.change(screen.getByLabelText('Stock adjust of 990101'), { target: { value: '120' } });
+    fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(setStockAdjustment).toHaveBeenCalledWith('990101', 120));
+  });
+
   it('shows a dash for products without planning data', () => {
-    renderMaster({ stock: { snapshot_date: null, loaded_at: null, loaded_by: null, rows: [] }, lots: [], orders: [] });
-    expect(within(row('990501')).getAllByText('—').length).toBe(3);
+    renderMaster({ stock: { snapshot_date: null, loaded_at: null, loaded_by: null, rows: [], adjustments: [] }, lots: [], orders: [] });
+    expect(within(row('990501')).getAllByText('—').length).toBe(4);
   });
 
   it('sums open orders with the earliest due date', () => {

@@ -96,7 +96,17 @@ def test_api_rejects_unknown_products_and_non_finite_tons():
     assert res.status_code == 422 and "not in the product master" in res.json()["detail"]
     res = client.post("/api/v1/optimize", content='{"horizon_days": 7, "product_demand": {"990101": NaN}}',
                       headers={"Content-Type": "application/json"})
-    assert res.status_code == 400
+    assert res.status_code == 422                   # NaN fails ge=0, like any out-of-range tons
+
+
+def test_api_rejects_negative_tons_with_a_422():
+    # a negative value used to reach CP-SAT and crash the model build (HTTP 500)
+    res = client.post("/api/v1/optimize", json={"horizon_days": 7, "demand": {"BR150": -5}})
+    assert res.status_code == 422
+    res = client.post("/api/v1/optimize", json={"horizon_days": 7, "product_demand": {"990101": -1}})
+    assert res.status_code == 422
+    res = client.post("/api/v1/optimize", json={"horizon_days": 7, "demand": {"BR150": 0}, "time_limit_s": 5})
+    assert res.status_code != 422                   # zero tons stays legal
 
 
 def test_without_product_demand_nothing_changes():

@@ -6,6 +6,7 @@ store; the SQL store is exercised against a fake connection (CI has no
 SQL Server).
 """
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,8 @@ from fastapi.testclient import TestClient
 import database
 import main
 from planning_data import imports, products, store
-from planning_data.sql import WriteRejected
+from planning_data.records import StockAdjustment
+from planning_data.sql import WriteRejected, utc
 
 client = TestClient(main.app)
 MOCK = Path(__file__).resolve().parents[1] / "sample_data" / "mock"
@@ -148,7 +150,7 @@ def test_stock_read_picks_the_latest_snapshot_on_or_before_a_date():
     assert client.get("/api/v1/stock").json()["snapshot_date"] == "2026-11-06"
     assert client.get("/api/v1/stock?on=2026-11-05").json()["snapshot_date"] == "2026-11-01"
     assert client.get("/api/v1/stock?on=2026-10-01").json() == {
-        "snapshot_date": None, "loaded_at": None, "loaded_by": None, "rows": []}
+        "snapshot_date": None, "loaded_at": None, "loaded_by": None, "rows": [], "adjustments": []}
 
 
 @pytest.mark.parametrize("cell, expected", [("12.5-", None), ("1,250.5", 1250.5), ("abc", None)])
@@ -307,8 +309,8 @@ def test_rows_the_database_refuses_are_422(monkeypatch, memory_mode):
 
 
 class FakeCursor:
-    def __init__(self, conn):
-        self.conn, self.rowcount = conn, 3
+    def __init__(self, conn, as_dict=False):
+        self.conn, self.as_dict, self.rowcount = conn, as_dict, 3
 
     def __enter__(self):
         return self
@@ -320,7 +322,8 @@ class FakeCursor:
         self.conn.executed.append(sql)
 
     def fetchone(self):
-        return (self.conn.actions.pop(0),)
+        value = self.conn.actions.pop(0)
+        return {"UpdatedAt": value} if self.as_dict else (value,)
 
 
 class FakeConnection:
@@ -329,7 +332,7 @@ class FakeConnection:
         self.committed = self.rolled_back = self.closed = False
 
     def cursor(self, as_dict=False):
-        return FakeCursor(self)
+        return FakeCursor(self, as_dict)
 
     def commit(self):
         self.committed = True
@@ -362,3 +365,63 @@ def test_sql_stock_replace_reports_the_deleted_rows(monkeypatch):
     assert (result.inserted, result.replaced) == (13, 3)
     assert conn.executed[0].startswith("DELETE FROM dbo.StockSnapshots")
     assert conn.committed
+
+
+# ----------------------------------------------------------------------------
+# hand-entered stock adjustments
+# ----------------------------------------------------------------------------
+def test_stock_adjustment_works_without_any_snapshot():
+    put = client.put("/api/v1/stock-adjustments/990101", json={"tons": 120})
+    assert put.status_code == 200
+    assert put.json()["material_no"] == "990101" and put.json()["adjust_tons"] == 120
+    snapshot = client.get("/api/v1/stock").json()
+    assert snapshot["snapshot_date"] is None and snapshot["rows"] == []
+    assert [a["material_no"] for a in snapshot["adjustments"]] == ["990101"]
+
+
+def test_stock_adjustment_wins_over_the_import_and_survives_a_reimport():
+    post("stock", 'Stock Date,Material Number,Unrestricted\n2026/11/06,990101,5\n')
+    put = client.put("/api/v1/stock-adjustments/990101", json={"tons": 120})
+    assert put.status_code == 200 and put.json()["adjust_tons"] == 120
+    snapshot = client.get("/api/v1/stock").json()
+    assert snapshot["rows"][0]["on_hand_tons"] == 5               # the import is untouched
+    # re-importing the same date replaces the snapshot but keeps the adjustment
+    post("stock", 'Stock Date,Material Number,Unrestricted\n2026/11/06,990101,7\n')
+    snapshot = client.get("/api/v1/stock").json()
+    assert snapshot["rows"][0]["on_hand_tons"] == 7
+    assert snapshot["adjustments"][0]["adjust_tons"] == 120
+
+
+def test_stock_adjustment_clears_back_to_the_imported_value():
+    client.put("/api/v1/stock-adjustments/990101", json={"tons": 120})
+    cleared = client.put("/api/v1/stock-adjustments/990101", json={"tons": None})
+    assert cleared.status_code == 200 and cleared.json() is None
+    assert client.get("/api/v1/stock").json()["adjustments"] == []
+
+
+def test_stock_adjustment_rejections():
+    unknown = client.put("/api/v1/stock-adjustments/999999", json={"tons": 1})
+    assert unknown.status_code == 422 and "product master" in unknown.json()["detail"]
+    assert client.put("/api/v1/stock-adjustments/990101", json={"tons": -1}).status_code == 422
+    assert client.get("/api/v1/stock").json()["adjustments"] == []      # nothing changed
+
+
+def test_sql_stock_adjustment_upsert_commits(monkeypatch):
+    conn = FakeConnection(actions=[datetime(2026, 11, 13, 9, 0)])      # the SELECTed UpdatedAt
+    monkeypatch.setattr(database, "_conn_params", {"server": "fake"})
+    monkeypatch.setattr(database, "open_connection", lambda: conn)
+    row = store.SqlPlanningStore().set_stock_adjustment("990101", 10, "test")
+    assert row == StockAdjustment(material_no="990101", adjust_tons=10,
+                                  updated_at=utc(datetime(2026, 11, 13, 9, 0)), updated_by="test")
+    assert conn.executed[0].lstrip().startswith("MERGE dbo.StockAdjustments")
+    assert conn.executed[1].startswith("SELECT UpdatedAt")
+    assert (conn.committed, conn.rolled_back, conn.closed) == (True, False, True)
+
+
+def test_sql_stock_adjustment_clear_deletes_and_commits(monkeypatch):
+    conn = FakeConnection()
+    monkeypatch.setattr(database, "_conn_params", {"server": "fake"})
+    monkeypatch.setattr(database, "open_connection", lambda: conn)
+    assert store.SqlPlanningStore().set_stock_adjustment("990101", None, "test") is None
+    assert conn.executed[0].startswith("DELETE FROM dbo.StockAdjustments")
+    assert (conn.committed, conn.rolled_back, conn.closed) == (True, False, True)

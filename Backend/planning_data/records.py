@@ -19,13 +19,25 @@ class StockRow(BaseModel):
     on_hand_tons: float
 
 
+class StockAdjustment(BaseModel):
+    """A hand-entered on-hand figure: takes precedence over the imported
+    snapshot value and exists even when no snapshot has been imported."""
+
+    material_no: str
+    adjust_tons: float
+    updated_at: Optional[datetime] = None
+    updated_by: Optional[str] = None
+
+
 class StockSnapshot(BaseModel):
-    """Released (QC-passed) stock of one export date."""
+    """Released (QC-passed) stock of one export date, plus every hand-entered
+    adjustment (they are not dated, so they always come along)."""
 
     snapshot_date: Optional[date] = None
     loaded_at: Optional[datetime] = None
     loaded_by: Optional[str] = None
     rows: List[StockRow] = []
+    adjustments: List[StockAdjustment] = []
 
 
 class QcLot(BaseModel):

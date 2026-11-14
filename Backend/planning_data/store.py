@@ -7,6 +7,8 @@ Writes come from the importers and are all-or-nothing:
   are left as they are
 - dry_run=True runs the same writes and rolls them back, so a preview also
   passes the database constraints
+- set_stock_adjustment is a hand-entered stock figure (not an import); it
+  takes precedence over the imported snapshot and survives every import
 
 Without a database the memory store starts with the fictitious data of
 sample_data/mock/ (imported through the same parsers).
@@ -21,7 +23,7 @@ from typing import List, Optional
 
 import database
 from planning_data import imports, products
-from planning_data.records import Forecast, QcLot, SalesOrder, StockRow, StockSnapshot
+from planning_data.records import Forecast, QcLot, SalesOrder, StockAdjustment, StockRow, StockSnapshot
 from planning_data.sql import CONSTRAINT_ERRORS, DUPLICATE_KEY_ERRORS, WriteRejected, connection, error_number, utc
 
 log = logging.getLogger("ibp.planning_data")
@@ -54,6 +56,7 @@ class MemoryPlanningStore:
     def __init__(self):
         self._lock = threading.Lock()
         self._stock = {}        # date -> (loaded_at, loaded_by, [StockRow])
+        self._adjusts = {}      # material_no -> StockAdjustment
         self._lots = {}         # lot_no -> QcLot
         self._orders = {}       # (order_no, item_no) -> SalesOrder
         self._forecasts = {}    # (group, month, source) -> Forecast
@@ -66,6 +69,20 @@ class MemoryPlanningStore:
             if not dry_run:
                 self._stock[snapshot_date] = (_now(), loaded_by, list(rows))
         return result
+
+    def set_stock_adjustment(self, material_no: str, tons: Optional[float], updated_by: str) -> Optional[StockAdjustment]:
+        """A hand-entered stock figure for one material (tons=None clears it).
+
+        Works with or without an imported snapshot: the adjustment is the
+        planner's figure, it never touches or needs the imported rows."""
+        with self._lock:
+            if tons is None:
+                self._adjusts.pop(material_no, None)
+                return None
+            adjustment = StockAdjustment(material_no=material_no, adjust_tons=tons,
+                                         updated_at=_now(), updated_by=updated_by)
+            self._adjusts[material_no] = adjustment
+            return adjustment
 
     def _upsert(self, table: dict, records, key, dry_run) -> WriteResult:
         result = WriteResult()
@@ -94,12 +111,13 @@ class MemoryPlanningStore:
     def stock_snapshot(self, on: Optional[date] = None) -> StockSnapshot:
         with self._lock:
             dates = [d for d in self._stock if on is None or d <= on]
+            adjustments = sorted(self._adjusts.values(), key=lambda a: a.material_no)
             if not dates:
-                return StockSnapshot()
+                return StockSnapshot(adjustments=adjustments)
             day = max(dates)
             loaded_at, loaded_by, rows = self._stock[day]
         return StockSnapshot(snapshot_date=day, loaded_at=loaded_at, loaded_by=loaded_by,
-                             rows=sorted(rows, key=lambda r: r.material_no))
+                             rows=sorted(rows, key=lambda r: r.material_no), adjustments=adjustments)
 
     def qc_lots(self, status: Optional[str] = None) -> List[QcLot]:
         with self._lock:
@@ -185,6 +203,31 @@ class SqlPlanningStore:
             _finish(conn, dry_run)
         return result
 
+    def set_stock_adjustment(self, material_no: str, tons: Optional[float], updated_by: str) -> Optional[StockAdjustment]:
+        """Upsert one hand-entered stock figure; None clears it again.
+
+        Works with or without an imported snapshot: the adjustment is the
+        planner's figure, it never touches or needs the imported rows."""
+        stamped = None
+        with connection() as conn, conn.cursor(as_dict=True) as cursor:
+            if tons is None:
+                cursor.execute("DELETE FROM dbo.StockAdjustments WHERE MaterialNo = %s;", (material_no,))
+            else:
+                _execute(cursor,
+                         "MERGE dbo.StockAdjustments WITH (HOLDLOCK) AS t "
+                         "USING (SELECT %s AS MaterialNo, %s AS AdjustTons, %s AS UpdatedBy) AS s "
+                         "ON t.MaterialNo = s.MaterialNo "
+                         "WHEN MATCHED THEN UPDATE SET AdjustTons = s.AdjustTons, UpdatedBy = s.UpdatedBy, "
+                         "UpdatedAt = SYSUTCDATETIME() "
+                         "WHEN NOT MATCHED THEN INSERT (MaterialNo, AdjustTons, UpdatedBy) "
+                         "VALUES (s.MaterialNo, s.AdjustTons, s.UpdatedBy);",
+                         (material_no, tons, updated_by))
+                cursor.execute("SELECT UpdatedAt FROM dbo.StockAdjustments WHERE MaterialNo = %s;", (material_no,))
+                stamped = utc(cursor.fetchone()["UpdatedAt"])
+            _finish(conn, False)
+        return None if tons is None else StockAdjustment(
+            material_no=material_no, adjust_tons=tons, updated_at=stamped, updated_by=updated_by)
+
     def _merge(self, sql, params_list, dry_run) -> WriteResult:
         result = WriteResult()
         with connection() as conn, conn.cursor() as cursor:
@@ -221,8 +264,12 @@ class SqlPlanningStore:
             else:
                 cursor.execute("SELECT MAX(SnapshotDate) AS Day FROM dbo.StockSnapshots WHERE SnapshotDate <= %s;", (on,))
             day = cursor.fetchone()["Day"]
+            # hand-entered figures are not dated, so they always come along
+            cursor.execute("SELECT MaterialNo, AdjustTons, UpdatedAt, UpdatedBy FROM dbo.StockAdjustments "
+                           "ORDER BY MaterialNo;")
+            adjustments = cursor.fetchall()
             if day is None:
-                return StockSnapshot()
+                return StockSnapshot(adjustments=[self._adjustment(r) for r in adjustments])
             cursor.execute("SELECT MaterialNo, OnHandTons, LoadedAt, LoadedBy FROM dbo.StockSnapshots "
                            "WHERE SnapshotDate = %s ORDER BY MaterialNo;", (day,))
             rows = cursor.fetchall()
@@ -231,7 +278,13 @@ class SqlPlanningStore:
             loaded_at=utc(max(r["LoadedAt"] for r in rows)),
             loaded_by=rows[0]["LoadedBy"],
             rows=[StockRow(material_no=r["MaterialNo"], on_hand_tons=float(r["OnHandTons"])) for r in rows],
+            adjustments=[self._adjustment(r) for r in adjustments],
         )
+
+    @staticmethod
+    def _adjustment(row: dict) -> StockAdjustment:
+        return StockAdjustment(material_no=row["MaterialNo"], adjust_tons=float(row["AdjustTons"]),
+                               updated_at=utc(row["UpdatedAt"]), updated_by=row["UpdatedBy"])
 
     def qc_lots(self, status: Optional[str] = None) -> List[QcLot]:
         sql = "SELECT LotNo, MaterialNo, Tons, ProducedDate, ReleaseDate, Status, UpdatedAt FROM dbo.QcLots"
