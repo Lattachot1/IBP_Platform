@@ -6,7 +6,7 @@ from fastapi import APIRouter
 
 import database
 from api.forecast import engine_status
-from planning_data import engine_forecast
+from planning_data import engine_forecast, sale_forecast
 from simulation import (
     NORMAL_CAPACITY_LIMIT,
     OVERTIME_COST_THB,
@@ -38,7 +38,10 @@ def handle_health():
         "model_service": "Connected (in-process forecasting engine)",
         "forecast_engine": engine_status(),
         # last write of the engine forecast into the planning data
+        # last write of the engine forecast into the planning data
         "forecast_publish": engine_forecast.last_publish(),
+        # last import of the client's Sale forecast (manual rows)
+        "sale_forecast_publish": sale_forecast.last_publish(),
         "planning_rules": {
             "normal_capacity": NORMAL_CAPACITY_LIMIT,
             "overtime_capacity": OVERTIME_EXTRA_CAPACITY,

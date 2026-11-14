@@ -29,6 +29,7 @@ def build_workbook() -> openpyxl.Workbook:
     # mapping row lists the block's bare materials
     ws.append(["BR150", "BR150(MN) ST", "400003-ST", "400003-WS"])
     ws.append([None, None, "400003-ST", "400003-WS"])
+    ws.append([None, "BR150(MN) VT", "400003-VT", None])
     ws.append([None, "BR150(GPS) CT", "400004-CT", "400768-CT"])
     ws.append([None, "400922", "400003", "400768"])
     # BR150LGN block, with no billing history at all
@@ -73,6 +74,16 @@ def test_workbook_grade_fills_forward_from_the_merged_block_cell():
     products, _ = status_workbook_products({}, GROUPS, workbook=build_workbook())
     assert {p.material_no: p.group_code for p in products}["400004"] == "BR150"
     assert {p.material_no: p.description for p in products}["401091"] == "401091"
+
+
+def test_grade_names_common_prefix_of_the_segments_served():
+    from planning_data.seed import grade_names
+
+    names = grade_names(build_workbook())
+    assert names["400003"] == "BR150(MN)"        # ST + VT -> the common prefix
+    assert names["400004"] == "BR150(GPS) CT"    # one segment: the whole name
+    assert names["401091"] == "BR150LGN (GPS)-MI"
+    assert "400768" in names                     # the mapping row adds no segment
 
 
 def test_billing_products_now_include_the_new_group():

@@ -240,4 +240,17 @@ describe('ProductMaster', () => {
     fireEvent.click(screen.getByRole('button', { name: /Update from forecast engine/ }));
     expect((await screen.findByRole('alert')).textContent).toContain('Forecast engine unavailable');
   });
+
+  it('imports the Sale forecast as manual rows and reloads the table', async () => {
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({
+      status: 'published', rows: 14, groups: ['BR150', 'BR150LGN'], first_month: '2026-11', last_month: '2027-12',
+      months_in_file: 24, skipped_segments: ['BR150GN (GPS) CT'], inserted: 14, updated: 0 }), { status: 200 }));
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    renderMaster({ refresh });
+    fireEvent.click(screen.getByRole('button', { name: /Update from Sale forecast/ }));
+    const note = await screen.findByRole('status');
+    expect(note.textContent).toBe('14 manual rows for BR150, BR150LGN (2026-11 to 2027-12) · 14 new, 0 updated · not a plant group: BR150GN (GPS) CT');
+    expect(fetchMock.mock.calls[0][0]).toBe(`${API_BASE_URL}/api/v1/forecasts/from-sale-forecast`);
+    expect(refresh).toHaveBeenCalled();
+  });
 });

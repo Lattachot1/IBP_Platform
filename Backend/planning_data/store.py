@@ -107,6 +107,14 @@ class MemoryPlanningStore:
         stamped = [f.model_copy(update={"updated_by": updated_by}) for f in forecasts]
         return self._upsert(self._forecasts, stamped, lambda r: (r.group_code, r.forecast_month, r.source), dry_run)
 
+    def delete_forecasts_by_editor(self, editor: str, dry_run=False) -> int:
+        with self._lock:
+            doomed = [k for k, f in self._forecasts.items() if f.updated_by == editor]
+            if not dry_run:
+                for k in doomed:
+                    del self._forecasts[k]
+        return len(doomed)
+
     # -- reads ----------------------------------------------------------------
     def stock_snapshot(self, on: Optional[date] = None) -> StockSnapshot:
         with self._lock:
@@ -256,6 +264,13 @@ class SqlPlanningStore:
         return self._merge(_MERGE_FORECAST, [
             (r.group_code, r.forecast_month, r.source, r.tons, updated_by) for r in forecasts
         ], dry_run)
+
+    def delete_forecasts_by_editor(self, editor: str, dry_run=False) -> int:
+        with connection() as conn, conn.cursor() as cursor:
+            cursor.execute("DELETE FROM dbo.DemandForecasts WHERE UpdatedBy = %s;", (editor,))
+            deleted = max(cursor.rowcount, 0)
+            _finish(conn, dry_run)
+        return deleted
 
     # -- reads ----------------------------------------------------------------
     def stock_snapshot(self, on: Optional[date] = None) -> StockSnapshot:

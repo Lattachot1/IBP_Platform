@@ -39,6 +39,7 @@ from planning_data.engine_forecast import group_of_grade
 from planning_data.products import (
     ProductCreate,
     ProductExists,
+    ProductUpdate,
     SqlProductStore,
     StoreUnavailable,
     load_mock_products,
@@ -156,6 +157,38 @@ def status_workbook_products(info: dict, groups: List[str], workbook=None):
     return sorted(products, key=lambda p: (p.group_code, p.material_no)), skipped
 
 
+def grade_names(workbook) -> dict:
+    """material -> the product's Sale forecast name: the longest common
+    prefix of the market segments it serves, so BR150(MN) ST / BR150(MN) VT
+    / ... become simply 'BR150(MN)'. A one-segment material keeps the whole
+    segment name. Rows whose segment column holds a bare material (the
+    block-end mapping rows) associate nothing."""
+    sheet = workbook["Current stock"]
+    segments: dict = {}
+    segment = None
+    for row in sheet.iter_rows(min_row=3, max_col=4, values_only=True):
+        mapping_row = row[1] is not None and _BARE_MATERIAL.fullmatch(str(row[1]).strip())
+        if row[1] is not None and not mapping_row:
+            segment = re.sub(r"\s+", " ", str(row[1])).strip()
+        if segment is None or mapping_row:
+            continue          # a block-end mapping row associates nothing
+        for cell in (row[2], row[3]):
+            code = str(cell).strip() if cell is not None else ""
+            base = code.split("-")[0]
+            if _BARE_MATERIAL.fullmatch(base):    # dashed codes certify their material too
+                segments.setdefault(base, set()).add(segment)
+    names = {}
+    for material, segment_set in segments.items():
+        ordered = sorted(segment_set)
+        prefix = ordered[0]
+        for other in ordered[1:]:
+            while prefix and not other.startswith(prefix):
+                prefix = prefix[:-1]
+        prefix = prefix.rstrip(" -(/").strip()
+        names[material] = prefix if len(prefix) >= 4 else ordered[0]
+    return names
+
+
 def _months_back(today: date, months: int) -> date:
     index = today.year * 12 + today.month - 1 - months
     return date(index // 12, index % 12 + 1, 1)
@@ -174,6 +207,8 @@ def main(argv=None) -> int:
 
     groups = [g["id"] for g in plant_groups()]
     skipped = Counter()
+    names = {}
+    info = {}
     if args.source == "mock":
         candidates = mock_products()
         print("sample_data/mock/products.csv: %d products" % len(candidates))
@@ -185,14 +220,22 @@ def main(argv=None) -> int:
         candidates, skipped = billing_products(frame, groups, since)
         print("Billing extract since %s: %d products in plant groups" % (since, len(candidates)))
         if args.source == "product-status":
+            from planning_data.sale_forecast import find_status_workbook
+            import openpyxl
+
+            workbook = openpyxl.load_workbook(find_status_workbook(), read_only=True)
+            info = billing_material_info(frame)
             known = {p.material_no for p in candidates}
-            extra, workbook_skipped = status_workbook_products(billing_material_info(frame), groups)
+            extra, workbook_skipped = status_workbook_products(info, groups, workbook=workbook)
             skipped += workbook_skipped
             new = [p for p in extra if p.material_no not in known]
             candidates += new
             candidates.sort(key=lambda p: (p.group_code, p.material_no))
             print("Product Status workbook: %d certified material(s), %d not in the billing window"
                   % (len(extra), len(new)))
+            names = grade_names(workbook)
+            candidates = [p.model_copy(update={"description": names[p.material_no]})
+                          if p.material_no in names else p for p in candidates]
     for grade, count in sorted(skipped.items()):
         print("  skipped %d material(s) of grade %s (not a group in plant_config.yaml)" % (count, grade))
 
@@ -221,6 +264,21 @@ def main(argv=None) -> int:
         print("Database error after adding %d product(s): %s" % (added, exc), file=sys.stderr)
         return 2
     print("Added %d product(s); %d already present and left unchanged." % (added, kept))
+    if names:
+        renamed = 0
+        try:
+            for existing in store.list():
+                sale_name = names.get(existing.material_no)
+                sap_name = info.get(existing.material_no, (None, None))[1]
+                # only rows still carrying the SAP description (a planner-set
+                # name is never touched)
+                if sale_name and existing.description == sap_name and existing.description != sale_name:
+                    store.update(existing.material_no, ProductUpdate(description=sale_name, updated_by=EDITOR))
+                    renamed += 1
+        except StoreUnavailable as exc:
+            print("Database error during the rename: %s" % exc, file=sys.stderr)
+            return 2
+        print("Renamed %d product(s) to their Sale forecast names." % renamed)
     return 0
 
 

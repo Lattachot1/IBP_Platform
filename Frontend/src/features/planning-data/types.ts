@@ -108,6 +108,19 @@ export interface EngineForecastReport {
   updated: number;
 }
 
+/** POST /api/v1/forecasts/from-sale-forecast (the Product Status workbook) */
+export interface SaleForecastReport {
+  status: 'published' | 'checked';
+  rows: number;
+  groups: string[];
+  first_month: string | null;
+  last_month: string | null;
+  months_in_file: number;
+  skipped_segments: string[];
+  inserted: number;
+  updated: number;
+}
+
 export interface Forecast {
   group_code: string;
   forecast_month: string;
