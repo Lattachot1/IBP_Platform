@@ -11,8 +11,9 @@ grades:
   BR360B:   { daily_capacity_tons: 230, min_run_days: 1 }
   VCR412:   { daily_capacity_tons: 230, min_run_days: 2 }
   VCR617:   { daily_capacity_tons: 220, min_run_days: 2 }
-  # Assumed a packaging variant of BR150L (same recipe): figures copied
-  # from BR150L until the client sends their own
+  # Company-confirmed (product_codespec_effective.csv): BR150LGN is its own
+  # product group and uses the same production constraints as BR150L — the
+  # figures below are still BR150L's until the client sends their own
   BR150LGN: { daily_capacity_tons: 220, min_run_days: 5 }
 
 vcr:

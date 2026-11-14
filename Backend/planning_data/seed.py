@@ -1,39 +1,39 @@
 """Load the product master into dbo.Products.
 
     cd Backend
-    python -m planning_data.seed --source product-status --dry-run
-    python -m planning_data.seed --source billing --dry-run
-    python -m planning_data.seed --source billing [--since 2025-01-01]
+    python -m planning_data.seed --source codespec --dry-run
+    python -m planning_data.seed --source codespec
     python -m planning_data.seed --source mock
 
-    # inside Docker (DATABASE_URL and the billing data are already there)
-    docker compose exec backend python -m planning_data.seed --source product-status
+    # inside Docker (DATABASE_URL and the file are already there)
+    docker compose exec backend python -m planning_data.seed --source codespec
 
-Products are SAP materials (6-digit 400xxx codes). --source product-status
-is the recommended one: the client's Product Status workbook
-(DemandModel/Product Status*.xlsx, never in git) certifies which materials
-are sellable - its 'Current stock' sheet maps every product to the bare
-material, the dashed '400003-ST' codes are material x market and are
-deliberately NOT products. These materials are unioned with everything
-billed since --since, so a material the client still lists but has not
-billed recently (or ever) still enters the master. Grade and description
-come from the billing extract; grades that are not a group of
-plant_config.yaml are skipped and listed.
---source billing: only the materials billed since --since (24 months).
+A product is a material-market code ('400003-ST'): the identity the
+factory's own data speaks everywhere (ZSDR orders, the stock report's
+batches, the Sale forecast segments). --source codespec builds the master
+from the project's curated catalog DemandModel/product_codespec_effective.csv
+(never in git): one row per product with its Sale forecast name, its plant
+group and the company's confirmations (record_decision = 'use' rows only).
+A combined spec ('400003-ST,WS') becomes one product per market. Active
+4-xxx products that the catalog does not list are deactivated, so the
+master follows the file; mock 99xxx products are untouched.
+--source billing: plain SAP materials billed since --since (24 months);
+kept for reference, not the recommended master.
 --source mock: the fictitious products of sample_data/mock/products.csv.
 
-Only missing materials are added. An existing product, including the
+Only missing products are added. An existing product, including the
 minimum stock a planner set on it, is never overwritten. New products
 start with MinStockTons = 0. Needs DATABASE_URL (or MSSQL_*) like the
-backend; --dry-run only prints what would be added.
+backend; --dry-run only prints what would be done.
 """
 
 import argparse
+import csv
 import re
 import sys
 from collections import Counter
 from datetime import date
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from planning_data.engine_forecast import group_of_grade
 from planning_data.products import (
@@ -47,6 +47,8 @@ from planning_data.products import (
 
 EDITOR = "seed script"
 _BARE_MATERIAL = re.compile(r"4\d{5}$")
+_PRODUCT_LIKE = re.compile(r"^4\d{5}(-[A-Z0-9,]+)?$")
+CATALOG_FILE = "product_codespec_effective.csv"
 
 
 def _most_common(values, fallback: str) -> str:
@@ -95,98 +97,54 @@ def mock_products() -> List[ProductCreate]:
     ) for p in load_mock_products()]
 
 
-def billing_material_info(df) -> dict:
-    """material -> (grade, description) over the WHOLE billing extract.
+def codespec_products(path, groups: List[str]) -> Tuple[List[ProductCreate], Counter]:
+    """The market-level products of the curated catalog CSV.
 
-    Used to describe workbook materials that have no sales in the seed
-    window: what the client billed them as historically is the honest
-    name and the grade the plant groups come from.
-    """
-    from forecasting.data import DESCRIPTION_COL, LEVEL_COL, MATERIAL_COL
-
-    info = {}
-    for material, rows in df[df[MATERIAL_COL].notna()].groupby(MATERIAL_COL):
-        material = str(material).strip()
-        info[material] = (_most_common(rows[LEVEL_COL], ""), _most_common(rows[DESCRIPTION_COL], material))
-    return info
-
-
-def status_workbook_products(info: dict, groups: List[str], workbook=None):
-    """Products certified by the Product Status workbook.
-
-    `workbook` may be an open openpyxl workbook (tests); otherwise the
-    first DemandModel/Product Status*.xlsx is used. Returns
-    (products, skipped) like billing_products.
+    One row per product: code_spec is the material-market code, product_raw
+    the Sale forecast name, effective_product_group the plant group, and
+    record_decision the company's call ('use' rows only). A combined spec
+    ('400003-ST,WS') becomes one product per market; a code repeated on
+    several rows is added once, first row wins.
     """
     from forecasting.data import DATA_DIR
 
-    if workbook is None:
-        workbooks = sorted(DATA_DIR.glob("Product Status*.xlsx"))
-        if not workbooks:
-            raise FileNotFoundError(
-                "no DemandModel/Product Status*.xlsx found - put the client's workbook there "
-                "or use --source billing")
-        import openpyxl
-        workbook = openpyxl.load_workbook(workbooks[0], read_only=True)
-    sheet = workbook["Current stock"]
-
-    keep = {}                      # material -> the workbook's grade block name
-    block_grade = None
-    for row in sheet.iter_rows(min_row=3, max_col=4, values_only=True):
-        if row[0]:
-            block_grade = str(row[0]).strip()
-        for cell in row[1:4]:      # the mapping columns carry bare materials
-            code = str(cell).strip() if cell is not None else ""
-            bare = code.split("-")[0]
-            if _BARE_MATERIAL.fullmatch(bare):   # dashed '400004-CT' certifies 400004 too
-                keep.setdefault(bare, block_grade or "")
-
-    products, skipped = [], Counter()
-    for material in sorted(keep):
-        grade, description = info.get(material, (keep[material], material))
-        group = group_of_grade(grade, groups) or group_of_grade(keep[material], groups)
-        if group is None:
-            skipped[grade or keep[material] or "(no grade)"] += 1
-            continue
-        products.append(ProductCreate(
-            material_no=material,
-            description=description[:100],
-            group_code=group,
-            updated_by=EDITOR,
-        ))
+    if path is None:
+        path = DATA_DIR / CATALOG_FILE
+    path = str(path)
+    products, skipped, seen = [], Counter(), set()
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            if (row.get("record_decision") or "").strip() != "use":
+                continue
+            name = re.sub(r"\s+", " ", (row.get("product_raw") or "").strip())
+            group = (row.get("effective_product_group") or "").strip()
+            spec = (row.get("code_spec") or "").strip().upper()
+            if not name or not group or not spec:
+                skipped["(incomplete row)"] += 1
+                continue
+            if group not in set(groups):
+                skipped[group] += 1
+                continue
+            if "," in spec:
+                # '400003-ST,WS': the part before the first comma still carries
+                # the material - strip it so every market gets its own code
+                base = spec.split("-")[0]
+                head, *rest = spec.split(",")
+                first = head.split("-", 1)[1]
+                codes = ["%s-%s" % (base, m.strip()) for m in [first] + rest if m.strip()]
+            else:
+                codes = [spec]
+            for code in codes:
+                if code in seen:
+                    continue
+                seen.add(code)
+                products.append(ProductCreate(
+                    material_no=code,
+                    description=name[:100],
+                    group_code=group,
+                    updated_by=EDITOR,
+                ))
     return sorted(products, key=lambda p: (p.group_code, p.material_no)), skipped
-
-
-def grade_names(workbook) -> dict:
-    """material -> the product's Sale forecast name: the longest common
-    prefix of the market segments it serves, so BR150(MN) ST / BR150(MN) VT
-    / ... become simply 'BR150(MN)'. A one-segment material keeps the whole
-    segment name. Rows whose segment column holds a bare material (the
-    block-end mapping rows) associate nothing."""
-    sheet = workbook["Current stock"]
-    segments: dict = {}
-    segment = None
-    for row in sheet.iter_rows(min_row=3, max_col=4, values_only=True):
-        mapping_row = row[1] is not None and _BARE_MATERIAL.fullmatch(str(row[1]).strip())
-        if row[1] is not None and not mapping_row:
-            segment = re.sub(r"\s+", " ", str(row[1])).strip()
-        if segment is None or mapping_row:
-            continue          # a block-end mapping row associates nothing
-        for cell in (row[2], row[3]):
-            code = str(cell).strip() if cell is not None else ""
-            base = code.split("-")[0]
-            if _BARE_MATERIAL.fullmatch(base):    # dashed codes certify their material too
-                segments.setdefault(base, set()).add(segment)
-    names = {}
-    for material, segment_set in segments.items():
-        ordered = sorted(segment_set)
-        prefix = ordered[0]
-        for other in ordered[1:]:
-            while prefix and not other.startswith(prefix):
-                prefix = prefix[:-1]
-        prefix = prefix.rstrip(" -(/").strip()
-        names[material] = prefix if len(prefix) >= 4 else ordered[0]
-    return names
 
 
 def _months_back(today: date, months: int) -> date:
@@ -196,10 +154,10 @@ def _months_back(today: date, months: int) -> date:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Add missing products to dbo.Products.")
-    parser.add_argument("--source", choices=["product-status", "billing", "mock"], required=True)
+    parser.add_argument("--source", choices=["codespec", "billing", "mock"], required=True)
     parser.add_argument("--since", type=date.fromisoformat, default=None,
-                        help="first billing date to include (default: 24 months back)")
-    parser.add_argument("--dry-run", action="store_true", help="print what would be added, write nothing")
+                        help="billing only: first billing date to include (default: 24 months back)")
+    parser.add_argument("--dry-run", action="store_true", help="print what would be done, write nothing")
     args = parser.parse_args(argv)
 
     import database
@@ -207,37 +165,21 @@ def main(argv=None) -> int:
 
     groups = [g["id"] for g in plant_groups()]
     skipped = Counter()
-    names = {}
-    info = {}
     if args.source == "mock":
         candidates = mock_products()
         print("sample_data/mock/products.csv: %d products" % len(candidates))
+    elif args.source == "codespec":
+        candidates, skipped = codespec_products(None, groups)
+        print("product_codespec_effective.csv: %d market product(s)" % len(candidates))
     else:
         from forecasting.data import load_billing_frame
 
-        frame = load_billing_frame()
         since = args.since or _months_back(date.today(), 24)
-        candidates, skipped = billing_products(frame, groups, since)
-        print("Billing extract since %s: %d products in plant groups" % (since, len(candidates)))
-        if args.source == "product-status":
-            from planning_data.sale_forecast import find_status_workbook
-            import openpyxl
-
-            workbook = openpyxl.load_workbook(find_status_workbook(), read_only=True)
-            info = billing_material_info(frame)
-            known = {p.material_no for p in candidates}
-            extra, workbook_skipped = status_workbook_products(info, groups, workbook=workbook)
-            skipped += workbook_skipped
-            new = [p for p in extra if p.material_no not in known]
-            candidates += new
-            candidates.sort(key=lambda p: (p.group_code, p.material_no))
-            print("Product Status workbook: %d certified material(s), %d not in the billing window"
-                  % (len(extra), len(new)))
-            names = grade_names(workbook)
-            candidates = [p.model_copy(update={"description": names[p.material_no]})
-                          if p.material_no in names else p for p in candidates]
+        candidates, skipped = billing_products(load_billing_frame(), groups, since)
+        print("Billing extract since %s: %d products in plant groups (legacy material-level source)"
+              % (since, len(candidates)))
     for grade, count in sorted(skipped.items()):
-        print("  skipped %d material(s) of grade %s (not a group in plant_config.yaml)" % (count, grade))
+        print("  skipped %d product(s): %s" % (count, grade))
 
     per_group = Counter(p.group_code for p in candidates)
     print("  per group: " + ", ".join("%s %d" % (g, per_group[g]) for g in groups))
@@ -264,21 +206,22 @@ def main(argv=None) -> int:
         print("Database error after adding %d product(s): %s" % (added, exc), file=sys.stderr)
         return 2
     print("Added %d product(s); %d already present and left unchanged." % (added, kept))
-    if names:
-        renamed = 0
+    if args.source == "codespec":
+        catalog = {p.material_no for p in candidates}
+        retired = 0
         try:
             for existing in store.list():
-                sale_name = names.get(existing.material_no)
-                sap_name = info.get(existing.material_no, (None, None))[1]
-                # only rows still carrying the SAP description (a planner-set
-                # name is never touched)
-                if sale_name and existing.description == sap_name and existing.description != sale_name:
-                    store.update(existing.material_no, ProductUpdate(description=sale_name, updated_by=EDITOR))
-                    renamed += 1
+                # an active 4-xxx product the catalog does not list is out of
+                # the company's catalog: deactivate it (mock 99xxx untouched)
+                if existing.is_active and _PRODUCT_LIKE.fullmatch(existing.material_no) \
+                        and existing.material_no not in catalog:
+                    store.update(existing.material_no, ProductUpdate(is_active=False, updated_by=EDITOR))
+                    retired += 1
         except StoreUnavailable as exc:
-            print("Database error during the rename: %s" % exc, file=sys.stderr)
+            print("Database error while deactivating retired products: %s" % exc, file=sys.stderr)
             return 2
-        print("Renamed %d product(s) to their Sale forecast names." % renamed)
+        if retired:
+            print("Deactivated %d product(s) the catalog does not list." % retired)
     return 0
 
 

@@ -25,7 +25,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from optimization.engine import plant_groups
-from planning_data import imports, products, store
+from planning_data import imports, products, stock_workbook, store
 from planning_data.records import Forecast, QcLot, SalesOrder, StockAdjustment, StockSnapshot
 from planning_data.sql import StoreUnavailable, WriteRejected
 
@@ -100,6 +100,25 @@ async def handle_import_stock(request: Request, stock_date: Optional[date] = Non
             parsed.snapshot_date, parsed.records, loaded_by, dry_run=dry_run))
 
     return await run_in_threadpool(run)
+
+
+@router.post("/api/v1/imports/stock-workbook")
+async def handle_import_stock_workbook(dry_run: bool = False, loaded_by: str = _editor()):
+    """Stock from the Product Status workbook's InventoryDaily_ZMMR021
+    sheet: the raw SAP stock report per material and batch, where the
+    batch name carries the market code ('908301HM' -> 400003-HM). Keeps
+    the UNRESTRICTED tons of the latest dated rows and replaces the whole
+    snapshot of that date, like every stock import. dry_run=true counts
+    the rows without keeping them."""
+    def run():
+        parsed = stock_workbook.parse(stock_workbook.load_status_workbook(), _product_index())
+        return _finish(parsed, dry_run, lambda: store.get_store().replace_stock(
+            parsed.snapshot_date, parsed.records, loaded_by, dry_run=dry_run))
+
+    try:
+        return await run_in_threadpool(run)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.post("/api/v1/imports/qc-lots", openapi_extra=CSV_BODY)

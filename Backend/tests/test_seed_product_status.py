@@ -1,92 +1,83 @@
-"""The Product Status workbook source of the seed script.
+"""The curated catalog (product_codespec_effective.csv) source of the seed.
 
-The workbook stays out of git (client data), so the tests build a tiny
-lookalike of its 'Current stock' sheet: grade blocks in column A (merged,
-so the cells below the block name are empty), dashed 'material-market'
-codes that are NOT products, and bare SAP materials in the mapping
-columns - including the block-end rows that list every material of the
-block.
+A product is a material-market code ('400003-ST') named by its Sale
+forecast segment and grouped by the company-confirmed plant group; a
+combined spec ('400003-ST,WS') expands to one product per market and a
+code repeated on several rows is added once.
 """
+
+import csv
+
+import pandas as pd
+import pytest
 
 from datetime import date
 
-import openpyxl
-import pandas as pd
-
 from planning_data.engine_forecast import GRADE_PREFIX
-from planning_data.seed import billing_products, status_workbook_products
+from planning_data.seed import billing_products, codespec_products
 
 GROUPS = ["BR150", "BR150B", "BR360B", "VCR412", "VCR617", "BR150L", "BR150LGN"]
 
-
-def build_workbook() -> openpyxl.Workbook:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "Current stock"
-    ws.append(["TSL - Inventory and Sale", None, None, "ZMMR021"])
-    ws.append([None, None, None, None])
-    # BR150 block: dashed codes must not become products; the block-end
-    # mapping row lists the block's bare materials
-    ws.append(["BR150", "BR150(MN) ST", "400003-ST", "400003-WS"])
-    ws.append([None, None, "400003-ST", "400003-WS"])
-    ws.append([None, "BR150(MN) VT", "400003-VT", None])
-    ws.append([None, "BR150(GPS) CT", "400004-CT", "400768-CT"])
-    ws.append([None, "400922", "400003", "400768"])
-    # BR150LGN block, with no billing history at all
-    ws.append(["BR150LGN", "BR150LGN (GPS)-MI", "401091-MI", None])
-    ws.append([None, None, "401091", None])
-    # BR150GN is still not a plant group: its material must be skipped
-    ws.append(["BR150GN", "BR150GN (GPS)-CT", "400982-CT", None])
-    ws.append([None, None, "400982", None])
-    return wb
+ROWS = [
+    dict(source_excel_row="2", product_raw="BR150(MN) ST", code_spec="400003-ST,WS",
+         effective_product_group="BR150", record_decision="use"),
+    dict(source_excel_row="2", product_raw="BR150(MN) ST", code_spec="400003-ST",
+         effective_product_group="BR150", record_decision="use"),          # duplicate code
+    dict(source_excel_row="4", product_raw="BR150(MN) - ML 41-48 HM", code_spec="400003-HM",
+         effective_product_group="BR150", record_decision="use"),
+    dict(source_excel_row="8", product_raw="BR150GN (MN) SH", code_spec="401094-SH",
+         effective_product_group="BR150", record_decision="use"),          # GN material, BR150 group
+    dict(source_excel_row="41", product_raw="BR360B (MN)", code_spec="400752-SS",
+         effective_product_group="BR360B", record_decision="use"),         # company-confirmed group
+    dict(source_excel_row="69", product_raw="BR150LGN (GPS)-MI", code_spec="401091-MI",
+         effective_product_group="BR150LGN", record_decision="use"),
+    dict(source_excel_row="70", product_raw="BR150GN (MN) SH", code_spec="401078-SH",
+         effective_product_group="BR150LGN", record_decision="hold"),      # not 'use': left out
+    dict(source_excel_row="71", product_raw="X-200 (MN)", code_spec="400999-X",
+         effective_product_group="X-200", record_decision="use"),          # no such plant group
+]
 
 
-def info():
-    """All-time billing knowledge: grade + description per material."""
-    return {
-        "400003": ("UBEPOL BR150", "UBEPOL AE150MN"),
-        "400768": ("UBEPOL BR150", "UBEPOL AE150GPS"),
-        "400922": ("UBEPOL BR150", "UBEPOL AE150CM2"),
-        "401091": ("UBEPOL BR150LGN", "UBEPOL AE150LGN"),
-        "400982": ("UBEPOL BR150GN", "UBEPOL AE150GN"),
-    }
+def write_catalog(path):
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=list(ROWS[0].keys()))
+        writer.writeheader()
+        writer.writerows(ROWS)
 
 
 def products_of(products):
     return {(p.material_no, p.group_code, p.description) for p in products}
 
 
-def test_dashed_codes_certify_their_material_but_are_not_products():
-    products, skipped = status_workbook_products(info(), GROUPS, workbook=build_workbook())
+def test_codespec_products(tmp_path):
+    catalog = tmp_path / "product_codespec_effective.csv"
+    write_catalog(catalog)
+    products, skipped = codespec_products(catalog, GROUPS)
     assert products_of(products) == {
-        ("400003", "BR150", "UBEPOL AE150MN"),
-        ("400768", "BR150", "UBEPOL AE150GPS"),
-        ("400922", "BR150", "UBEPOL AE150CM2"),   # the bare code in the mapping row
-        ("400004", "BR150", "400004"),            # dashed only, never billed: code as name
-        ("401091", "BR150LGN", "UBEPOL AE150LGN"),
+        ("400003-ST", "BR150", "BR150(MN) ST"),       # the comma spec expands, the duplicate is once
+        ("400003-WS", "BR150", "BR150(MN) ST"),
+        ("400003-HM", "BR150", "BR150(MN) - ML 41-48 HM"),
+        ("401094-SH", "BR150", "BR150GN (MN) SH"),
+        ("400752-SS", "BR360B", "BR360B (MN)"),        # the company's group wins over the raw one
+        ("401091-MI", "BR150LGN", "BR150LGN (GPS)-MI"),
     }
-    assert skipped == {"UBEPOL BR150GN": 1}
-    assert all("-" not in p.material_no for p in products)
+    assert skipped == {"X-200": 1}
 
 
-def test_workbook_grade_fills_forward_from_the_merged_block_cell():
-    # 400004 sits two rows under the BR150 block header with an empty A cell
-    products, _ = status_workbook_products({}, GROUPS, workbook=build_workbook())
-    assert {p.material_no: p.group_code for p in products}["400004"] == "BR150"
-    assert {p.material_no: p.description for p in products}["401091"] == "401091"
+def test_codespec_reads_the_real_catalog():
+    """The client catalog lives on this machine (CI skips: never in git)."""
+    from forecasting.data import DATA_DIR
+
+    catalog = DATA_DIR / "product_codespec_effective.csv"
+    if not catalog.exists():
+        pytest.skip("the client catalog is not on this machine")
+    products, skipped = codespec_products(None, GROUPS)
+    assert len(products) >= 80 and all("-" in p.material_no for p in products)
+    assert all(p.group_code in GROUPS for p in products)
+    assert skipped == {}
 
 
-def test_grade_names_common_prefix_of_the_segments_served():
-    from planning_data.seed import grade_names
-
-    names = grade_names(build_workbook())
-    assert names["400003"] == "BR150(MN)"        # ST + VT -> the common prefix
-    assert names["400004"] == "BR150(GPS) CT"    # one segment: the whole name
-    assert names["401091"] == "BR150LGN (GPS)-MI"
-    assert "400768" in names                     # the mapping row adds no segment
-
-
-def test_billing_products_now_include_the_new_group():
+def test_billing_products_still_produce_plain_materials():
     frame = pd.DataFrame({
         "Material Number": ["401091", "401091", "400003"],
         "Grade": ["UBEPOL BR150LGN", "UBEPOL BR150LGN", "UBEPOL BR150"],

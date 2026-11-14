@@ -17,6 +17,7 @@ says which line and column. Warnings never block an import.
 import csv
 import io
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
@@ -24,6 +25,7 @@ from typing import Dict, Iterable, List, Optional
 from planning_data.records import Forecast, QcLot, SalesOrder, StockRow
 
 MAX_BYTES = 5 * 1024 * 1024
+_BATCH_MARKET = re.compile(r"([A-Z]+)$")    # the batch name ends in the market code
 MAX_REPORTED = 200            # problems listed in a report; the count is always exact
 HEADER_SCAN_ROWS = 10
 DATE_FORMATS = ("%Y/%m/%d", "%Y-%m-%d", "%d.%m.%Y")
@@ -247,9 +249,13 @@ def parse_stock(data: bytes, products: dict, stock_date: Optional[date] = None) 
 
 
 def parse_qc_lots(data: bytes, products: dict) -> Parsed:
-    """SAP inspection lots: blank usage decision = still in QC, A = released, R = rejected."""
+    """SAP inspection lots: blank usage decision = still in QC, A = released, R = rejected.
+
+    An optional 'Batch Number' column maps the lot to its market product:
+    the batch name ends in the market code (908301HM -> 400003-HM), which
+    wins over the bare Material Number when that is no longer a product."""
     required = ["Inspection Lot", "Material Number", "Lot Qty", "Production Date", "Release Date"]
-    parsed, table = _open("qc-lots", data, required, ["Usage Decision", "SU"])
+    parsed, table = _open("qc-lots", data, required, ["Usage Decision", "SU", "Batch Number"])
     if table is None:
         return parsed
     seen: Dict[str, int] = {}
@@ -262,7 +268,18 @@ def parse_qc_lots(data: bytes, products: dict) -> Parsed:
             parsed.error(line, "Inspection Lot", "lot %s is already on line %d" % (lot_no, seen[lot_no]))
             continue
         seen[lot_no] = line
-        material = _material(parsed, table, line, cells, products)
+        material = table.cell(cells, "Material Number").upper()
+        batch = table.cell(cells, "Batch Number").upper()
+        suffix = _BATCH_MARKET.search(batch) if batch else None
+        market = (material.split("-")[0] + "-" + suffix.group(1)) if suffix and material else None
+        if market and market in products:
+            material = market                 # the batch carries the market code
+        elif material in products:
+            pass
+        else:
+            parsed.error(line, "Material Number",
+                         "unknown material %s - add it to the product master first" % (material or "…"))
+            continue
         column = "Lot Qty"
         try:
             quantity = tons(table.cell(cells, "Lot Qty"), table.cell(cells, "SU"))
