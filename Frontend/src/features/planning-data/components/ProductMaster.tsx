@@ -159,11 +159,12 @@ function DetailRow({ p, master, views }: { p: Product; master: ProductMasterStat
             ))}
           </MiniTable>
           <MiniTable caption="Sales orders" empty="No sales orders for this product" head={
-            <tr><th className={th}>Order / item</th><th className={`${th} text-right`}>Ordered (t)</th><th className={`${th} text-right`}>Open (t)</th><th className={th}>Due</th><th className={th}>Status</th></tr>
+            <tr><th className={th}>Order / item</th><th className={th}>Ship to</th><th className={`${th} text-right`}>Ordered (t)</th><th className={`${th} text-right`}>Open (t)</th><th className={th}>Due</th><th className={th}>Status</th></tr>
           }>
             {orders.map((o) => (
               <tr key={`${o.order_no}/${o.item_no}`}>
                 <td className={`${td} font-mono`}>{o.order_no}/{o.item_no}</td>
+                <td className={`${td} font-mono`}>{o.ship_to ?? '—'}</td>
                 <td className={`${td} text-right font-mono`}>{formatNumber(o.tons)}</td>
                 <td className={`${td} text-right font-mono font-semibold`}>{formatNumber(o.open_tons)}</td>
                 <td className={td}>{o.due_date}</td>

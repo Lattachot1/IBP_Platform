@@ -153,12 +153,12 @@ OUTPUT $action;
 _MERGE_SALES_ORDER = """
 MERGE dbo.SalesOrders WITH (HOLDLOCK) AS t
 USING (SELECT %s AS OrderNo, %s AS ItemNo, %s AS MaterialNo, %s AS Tons, %s AS ShippedTons,
-              %s AS DueDate, %s AS Status) AS s
+              %s AS DueDate, %s AS Status, %s AS ShipTo) AS s
 ON t.OrderNo = s.OrderNo AND t.ItemNo = s.ItemNo
 WHEN MATCHED THEN UPDATE SET MaterialNo = s.MaterialNo, Tons = s.Tons, ShippedTons = s.ShippedTons,
-    DueDate = s.DueDate, Status = s.Status, UpdatedAt = SYSUTCDATETIME()
-WHEN NOT MATCHED THEN INSERT (OrderNo, ItemNo, MaterialNo, Tons, ShippedTons, DueDate, Status)
-    VALUES (s.OrderNo, s.ItemNo, s.MaterialNo, s.Tons, s.ShippedTons, s.DueDate, s.Status)
+    DueDate = s.DueDate, Status = s.Status, ShipTo = s.ShipTo, UpdatedAt = SYSUTCDATETIME()
+WHEN NOT MATCHED THEN INSERT (OrderNo, ItemNo, MaterialNo, Tons, ShippedTons, DueDate, Status, ShipTo)
+    VALUES (s.OrderNo, s.ItemNo, s.MaterialNo, s.Tons, s.ShippedTons, s.DueDate, s.Status, s.ShipTo)
 OUTPUT $action;
 """
 
@@ -248,7 +248,8 @@ class SqlPlanningStore:
 
     def upsert_sales_orders(self, orders: List[SalesOrder], dry_run=False) -> WriteResult:
         return self._merge(_MERGE_SALES_ORDER, [
-            (r.order_no, r.item_no, r.material_no, r.tons, r.shipped_tons, r.due_date, r.status) for r in orders
+            (r.order_no, r.item_no, r.material_no, r.tons, r.shipped_tons, r.due_date, r.status, r.ship_to)
+            for r in orders
         ], dry_run)
 
     def upsert_forecasts(self, forecasts: List[Forecast], updated_by: str, dry_run=False) -> WriteResult:
@@ -304,7 +305,7 @@ class SqlPlanningStore:
             if value is not None:
                 where.append(clause)
                 params.append(value)
-        sql = ("SELECT OrderNo, ItemNo, MaterialNo, Tons, ShippedTons, DueDate, Status, UpdatedAt "
+        sql = ("SELECT OrderNo, ItemNo, MaterialNo, Tons, ShippedTons, DueDate, Status, ShipTo, UpdatedAt "
                "FROM dbo.SalesOrders" + (" WHERE " + " AND ".join(where) if where else "")
                + " ORDER BY DueDate, OrderNo, ItemNo;")
         with connection() as conn, conn.cursor(as_dict=True) as cursor:
@@ -312,7 +313,7 @@ class SqlPlanningStore:
             rows = cursor.fetchall()
         return [SalesOrder(order_no=r["OrderNo"], item_no=r["ItemNo"], material_no=r["MaterialNo"],
                            tons=float(r["Tons"]), shipped_tons=float(r["ShippedTons"]), due_date=r["DueDate"],
-                           status=r["Status"], updated_at=utc(r["UpdatedAt"])) for r in rows]
+                           status=r["Status"], ship_to=r["ShipTo"], updated_at=utc(r["UpdatedAt"])) for r in rows]
 
     def forecasts(self, month_from=None, month_to=None) -> List[Forecast]:
         where, params = [], []

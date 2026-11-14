@@ -291,7 +291,7 @@ def parse_qc_lots(data: bytes, products: dict) -> Parsed:
 def parse_sales_orders(data: bytes, products: dict) -> Parsed:
     """SAP sales order items. Items missing from a file are left as they are."""
     required = ["Sales Order Number", "Sales Order Item", "Material Number", "Order Qty", "Req. Delivery Date"]
-    parsed, table = _open("sales-orders", data, required, ["Delivered Qty", "Status", "SU"])
+    parsed, table = _open("sales-orders", data, required, ["Delivered Qty", "Status", "SU", "Ship-to Code"])
     if table is None:
         return parsed
     seen: Dict[tuple, int] = {}
@@ -337,8 +337,10 @@ def parse_sales_orders(data: bytes, products: dict) -> Parsed:
         if material:
             if status == "open" and not products[material].is_active:
                 parsed.warn(line, "Material Number", "open order for the inactive product %s" % material)
+            ship_to = table.cell(cells, "Ship-to Code")
             parsed.records.append(SalesOrder(order_no=order_no, item_no=key[1], material_no=material,
-                                             tons=ordered, shipped_tons=delivered, due_date=due, status=status))
+                                             tons=ordered, shipped_tons=delivered, due_date=due, status=status,
+                                             ship_to=ship_to or None))
     return parsed
 
 

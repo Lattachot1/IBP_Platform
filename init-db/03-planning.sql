@@ -113,6 +113,13 @@ BEGIN
 END
 GO
 
+-- The ship-to partner code of an order line (a code, never a customer
+-- name): the join key the factory's market dimension (ST, GPS, BS, ...)
+-- will hang off once the client sends the ship-to-to-market table.
+IF COL_LENGTH(N'dbo.SalesOrders', N'ShipTo') IS NULL
+    ALTER TABLE dbo.SalesOrders ADD ShipTo NVARCHAR(20) NULL;
+GO
+
 -- Monthly forecast per product group. A 'manual' row (planner) overrides
 -- the 'engine' row (forecast engine) of the same group and month.
 IF OBJECT_ID(N'dbo.DemandForecasts', N'U') IS NULL

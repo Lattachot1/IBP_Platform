@@ -31,7 +31,7 @@ const views = (overrides: Partial<PlanningViewsState> = {}): PlanningViewsState 
   stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data',
     rows: [{ material_no: '990101', on_hand_tons: 90 }], adjustments: [] },
   lots: [{ lot_no: 'L1', material_no: '990101', tons: 40, produced_date: '2026-11-01', release_date: '2026-11-06', status: 'in_qc' }],
-  orders: [{ order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open' }],
+  orders: [{ order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open', ship_to: '50629' }],
   forecasts: [{ group_code: 'BR150', forecast_month: '2026-12-01', source: 'manual', tons: 2600, updated_by: 'Planner A' }],
   loading: false,
   error: null,
@@ -151,9 +151,9 @@ describe('ProductMaster', () => {
 
   it('sums open orders with the earliest due date', () => {
     renderMaster({ orders: [
-      { order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open' },
-      { order_no: 'SO2', item_no: 1, material_no: '990101', tons: 100, shipped_tons: 0, open_tons: 100, due_date: '2026-11-30', status: 'open' },
-      { order_no: 'SO3', item_no: 1, material_no: '990101', tons: 50, shipped_tons: 50, open_tons: 0, due_date: '2026-11-10', status: 'closed' },
+      { order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open', ship_to: '50629' },
+      { order_no: 'SO2', item_no: 1, material_no: '990101', tons: 100, shipped_tons: 0, open_tons: 100, due_date: '2026-11-30', status: 'open', ship_to: null },
+      { order_no: 'SO3', item_no: 1, material_no: '990101', tons: 50, shipped_tons: 50, open_tons: 0, due_date: '2026-11-10', status: 'closed', ship_to: null },
     ] });
     expect(within(row('990101')).getByText('300')).toBeTruthy();
     expect(within(row('990101')).getByText(/next due 2026-11-12/)).toBeTruthy();
@@ -165,6 +165,7 @@ describe('ProductMaster', () => {
     fireEvent.click(within(row('990101')).getByRole('button', { name: 'Details of 990101' }));
     expect(screen.getByText('L1')).toBeTruthy();
     expect(screen.getByText('SO1/1')).toBeTruthy();
+    expect(screen.getByText('50629')).toBeTruthy();          // the ship-to code, not a name
     expect(screen.getByText(/Group forecast — BR150/)).toBeTruthy();
     expect(screen.getByText('manual (overrides engine)')).toBeTruthy();
     expect(screen.getByText(/Last change: sample data/)).toBeTruthy();

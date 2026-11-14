@@ -92,6 +92,8 @@ export interface SalesOrder {
   open_tons: number;
   due_date: string;
   status: 'open' | 'closed' | 'cancelled';
+  /** the ship-to partner code, never a customer name */
+  ship_to: string | null;
 }
 
 /** POST /api/v1/forecasts/from-engine */
