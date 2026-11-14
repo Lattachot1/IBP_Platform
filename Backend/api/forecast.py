@@ -29,7 +29,7 @@ forecast_engine: Optional[dict] = None
 # Background training state: idle | training | failed (engine None + failed = why)
 _training = {"state": "idle", "started_at": None, "error": None}
 # Bump after any change to the training pipeline so old caches are dropped
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 
 def _cache_path() -> Path:

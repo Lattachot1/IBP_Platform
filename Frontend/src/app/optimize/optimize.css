@@ -27,6 +27,7 @@
   --s4: #eda100; --s4i: #0b0b0b;  /* slot 4: VCR412 */
   --s5: #e87ba4; --s5i: #0b0b0b;  /* slot 5: VCR617 */
   --s6: #008300; --s6i: #ffffff;  /* slot 6: BR150L */
+  --s7: #8b5cf6; --s7i: #ffffff;  /* slot 7: BR150LGN */
 
   min-height: 100vh;
   background: var(--page);

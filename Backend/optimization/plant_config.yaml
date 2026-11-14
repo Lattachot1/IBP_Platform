@@ -5,12 +5,15 @@
 # =============================================================================
 
 grades:
-  BR150:  { daily_capacity_tons: 230, min_run_days: 2 }
-  BR150L: { daily_capacity_tons: 220, min_run_days: 5 }
-  BR150B: { daily_capacity_tons: 239, min_run_days: 4 }
-  BR360B: { daily_capacity_tons: 230, min_run_days: 1 }
-  VCR412: { daily_capacity_tons: 230, min_run_days: 2 }
-  VCR617: { daily_capacity_tons: 220, min_run_days: 2 }
+  BR150:    { daily_capacity_tons: 230, min_run_days: 2 }
+  BR150L:   { daily_capacity_tons: 220, min_run_days: 5 }
+  BR150B:   { daily_capacity_tons: 239, min_run_days: 4 }
+  BR360B:   { daily_capacity_tons: 230, min_run_days: 1 }
+  VCR412:   { daily_capacity_tons: 230, min_run_days: 2 }
+  VCR617:   { daily_capacity_tons: 220, min_run_days: 2 }
+  # Assumed a packaging variant of BR150L (same recipe): figures copied
+  # from BR150L until the client sends their own
+  BR150LGN: { daily_capacity_tons: 220, min_run_days: 5 }
 
 vcr:
   min_total_days: 8          # VCR-412 + VCR-617 combined per campaign
@@ -19,21 +22,24 @@ vcr:
     from: VCR412
     to: VCR617
 
-# Allowed transitions — the 11 pairs of Allow_GradeChange — with the
-# combined changeover-day ceiling in tons. assumed: true = the client
-# figure is still pending, currently an assumed -5 t loss.
+# Allowed transitions — the client's 11 pairs of Allow_GradeChange plus
+# the assumed BR150L <-> BR150LGN pair — with the combined changeover-day
+# ceiling in tons. assumed: true = the client figure is still pending,
+# currently an assumed -5 t loss.
 transitions:
-  - { from: BR150,  to: BR150L, ceiling_tons: 215 }
-  - { from: BR150,  to: BR150B, ceiling_tons: 234 }
-  - { from: BR150,  to: VCR412, ceiling_tons: 200 }
-  - { from: BR150L, to: BR150,  ceiling_tons: 225 }
-  - { from: BR150B, to: BR150,  ceiling_tons: 225 }
-  - { from: BR150B, to: BR360B, ceiling_tons: 225, assumed: true }
-  - { from: BR360B, to: BR150,  ceiling_tons: 225, assumed: true }
-  - { from: BR360B, to: BR150B, ceiling_tons: 234, assumed: true }
-  - { from: VCR412, to: BR150,  ceiling_tons: 225, assumed: true }
-  - { from: VCR412, to: VCR617, ceiling_tons: 190 }
-  - { from: VCR617, to: BR150,  ceiling_tons: 95 }
+  - { from: BR150,    to: BR150L,   ceiling_tons: 215 }
+  - { from: BR150,    to: BR150B,   ceiling_tons: 234 }
+  - { from: BR150,    to: VCR412,   ceiling_tons: 200 }
+  - { from: BR150L,   to: BR150,    ceiling_tons: 225 }
+  - { from: BR150B,   to: BR150,    ceiling_tons: 225 }
+  - { from: BR150B,   to: BR360B,   ceiling_tons: 225, assumed: true }
+  - { from: BR360B,   to: BR150,    ceiling_tons: 225, assumed: true }
+  - { from: BR360B,   to: BR150B,   ceiling_tons: 234, assumed: true }
+  - { from: VCR412,   to: BR150,    ceiling_tons: 225, assumed: true }
+  - { from: VCR412,   to: VCR617,   ceiling_tons: 190 }
+  - { from: VCR617,   to: BR150,    ceiling_tons: 95 }
+  - { from: BR150L,   to: BR150LGN, ceiling_tons: 215, assumed: true }
+  - { from: BR150LGN, to: BR150L,   ceiling_tons: 225, assumed: true }
 
 reactor:
   rx12_max_age_days: 60          # RX1-2 must be cleaned before 60 production days

@@ -13,6 +13,7 @@ export const GRADES: GradeMeta[] = [
   { id: 'VCR412', disp: 'VCR-412', slot: 4 },
   { id: 'VCR617', disp: 'VCR-617', slot: 5 },
   { id: 'BR150L', disp: 'BR150L', slot: 6 },
+  { id: 'BR150LGN', disp: 'BR150LGN', slot: 7 },
 ];
 
 export function slotOf(gradeId: string): number {
@@ -31,6 +32,7 @@ export const DEMAND_DEFAULT: Record<string, number> = {
   BR360B: 400,
   VCR412: 500,
   VCR617: 1000,
+  BR150LGN: 0, // the sample-plan story predates the group; no client figures yet
 };
 
 // Reactor-pair status per plan day, parallel to DAYS.

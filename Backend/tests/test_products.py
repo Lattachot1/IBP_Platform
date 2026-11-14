@@ -169,7 +169,10 @@ def test_catalog_follows_plant_config_with_active_products():
     assert [g["id"] for g in body["groups"]] == [g["id"] for g in plant_groups()]
     by_group = {g["id"]: _materials(g["products"]) for g in body["groups"]}
     assert by_group["BR150"] == ["990101", "990102", "990103"]   # 990104 is inactive
-    assert all(by_group.values())
+    # BR150LGN is a real group the mock master has no products for yet;
+    # every group the mock covers must show exactly its active products
+    assert by_group["BR150LGN"] == []
+    assert all(v for g, v in by_group.items() if g != "BR150LGN")
     assert body["unassigned"] == []
     first = body["groups"][0]
     assert {"id", "disp", "slot", "products"} <= set(first)

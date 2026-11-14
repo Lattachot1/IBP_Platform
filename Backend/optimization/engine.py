@@ -49,7 +49,7 @@ from optimization.sample_plan import (
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), "plant_config.yaml")
 
 GRADE_DISPLAY = {"VCR412": "VCR-412", "VCR617": "VCR-617"}
-SLOT_ORDER = ["BR150", "BR150B", "BR360B", "VCR412", "VCR617", "BR150L"]
+SLOT_ORDER = ["BR150", "BR150B", "BR360B", "VCR412", "VCR617", "BR150L", "BR150LGN"]
 WD_NAMES = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"]
 
 # Changeover penalty weight per request objective — fulfilled tons dominate,

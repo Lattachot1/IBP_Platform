@@ -13,7 +13,7 @@ describe('buildRequest', () => {
       horizon_days: 28,
       start_date: '2026-11-09',
       objective: 'maximize_fulfilled',
-      demand: { BR150: 2600, BR150B: 1300, BR360B: 400, VCR412: 500, VCR617: 1000, BR150L: 900 },
+      demand: { BR150: 2600, BR150B: 1300, BR360B: 400, VCR412: 500, VCR617: 1000, BR150L: 900, BR150LGN: 0 },
       holidays: [],
       time_limit_s: 30,
       initial: { grade: 'BR150', remain_days: 2, rx12_age: 54, rx34_age: 0 },
