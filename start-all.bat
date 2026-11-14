@@ -54,7 +54,11 @@ echo [1/4] Docker is ready.
 REM --- 2. start only the database + one-shot schema init ---
 REM      (the compose backend/frontend containers stay off so the
 REM       local dev servers can use ports 8080 / 3000)
-docker compose up -d mssql db-init
+REM      db-init is force-recreated every start: compose will NOT re-run
+REM      an exited one-shot container otherwise, so edited init-db/*.sql
+REM      would silently never apply (the scripts themselves are idempotent)
+docker compose up -d mssql
+docker compose up -d --force-recreate db-init
 if errorlevel 1 (
   echo docker compose failed - check the error above.
   pause
