@@ -103,48 +103,60 @@ def codespec_products(path, groups: List[str]) -> Tuple[List[ProductCreate], Cou
     One row per product: code_spec is the material-market code, product_raw
     the Sale forecast name, effective_product_group the plant group, and
     record_decision the company's call ('use' rows only). A combined spec
-    ('400003-ST,WS') becomes one product per market; a code repeated on
-    several rows is added once, first row wins.
+    ('400003-ST,WS') is ONE product and its individual SAP codes fold into
+    it (planning_data.market_aliases); a single-spec row whose code is
+    already covered by a combined product is the duplicate and is dropped.
     """
     from forecasting.data import DATA_DIR
+    from planning_data.market_aliases import combined_key
 
     if path is None:
         path = DATA_DIR / CATALOG_FILE
     path = str(path)
-    products, skipped, seen = [], Counter(), set()
-    with open(path, encoding="utf-8-sig", newline="") as fh:
-        for row in csv.DictReader(fh):
-            if (row.get("record_decision") or "").strip() != "use":
-                continue
-            name = re.sub(r"\s+", " ", (row.get("product_raw") or "").strip())
-            group = (row.get("effective_product_group") or "").strip()
-            spec = (row.get("code_spec") or "").strip().upper()
-            if not name or not group or not spec:
-                skipped["(incomplete row)"] += 1
-                continue
-            if group not in set(groups):
-                skipped[group] += 1
-                continue
-            if "," in spec:
-                # '400003-ST,WS': the part before the first comma still carries
-                # the material - strip it so every market gets its own code
-                base = spec.split("-")[0]
-                head, *rest = spec.split(",")
-                first = head.split("-", 1)[1]
-                codes = ["%s-%s" % (base, m.strip()) for m in [first] + rest if m.strip()]
-            else:
-                codes = [spec]
-            for code in codes:
-                if code in seen:
+
+    def rows():
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                if (row.get("record_decision") or "").strip() != "use":
                     continue
-                seen.add(code)
-                products.append(ProductCreate(
-                    material_no=code,
-                    description=name[:100],
-                    group_code=group,
-                    updated_by=EDITOR,
-                ))
-    return sorted(products, key=lambda p: (p.group_code, p.material_no)), skipped
+                yield row
+
+    products: dict = {}               # code -> (name, group)
+    order: List[str] = []
+    skipped = Counter()
+    for row in rows():
+        spec = re.sub(r"\s+", "", (row.get("code_spec") or "").strip().upper())
+        name = re.sub(r"\s+", " ", (row.get("product_raw") or "").strip())
+        group = (row.get("effective_product_group") or "").strip()
+        if not spec or not name or not group:
+            skipped["(incomplete row)"] += 1
+            continue
+        if group not in set(groups):
+            skipped[group] += 1
+            continue
+        if "," in spec and spec not in products:
+            products[spec] = (name, group)
+            order.append(spec)
+    covered = set()
+    for spec in products:
+        base, tail = spec.split("-", 1)
+        covered.update("%s-%s" % (base, m) for m in tail.split(",") if m)
+    for row in rows():
+        spec = re.sub(r"\s+", "", (row.get("code_spec") or "").strip().upper())
+        name = re.sub(r"\s+", " ", (row.get("product_raw") or "").strip())
+        group = (row.get("effective_product_group") or "").strip()
+        # pass 1 already counted every group problem, so this pass skips silently
+        if "," in spec or not spec or not name or not group or group not in set(groups):
+            continue
+        if spec in covered or spec in products:
+            continue                  # a duplicate of a combined product: dropped
+        products[spec] = (name, group)
+        order.append(spec)
+    out = [ProductCreate(material_no=combined_key(spec) if "," in spec else spec,
+                         description=products[spec][0][:100], group_code=products[spec][1],
+                         updated_by=EDITOR)
+           for spec in order]
+    return sorted(out, key=lambda p: (p.group_code, p.material_no)), skipped
 
 
 def _months_back(today: date, months: int) -> date:

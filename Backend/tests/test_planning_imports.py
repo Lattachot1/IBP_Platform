@@ -85,6 +85,20 @@ def test_qc_lot_batch_maps_to_the_market_product():
     assert [r.material_no for r in parsed.records] == ["400003-HM", "990101"]
 
 
+def test_order_combined_spec_and_its_sap_codes_fold_together(monkeypatch):
+    known = {p.material_no: p for p in products.load_mock_products()}
+    known["400003-ST,WS"] = known["990101"]
+    monkeypatch.setattr(imports, "codespec_aliases", lambda: {"400003-ST": "400003-ST,WS",
+                                                              "400003-WS": "400003-ST,WS"})
+    header = "Sales Order Number,Sales Order Item,Material Number,Order Qty,Req. Delivery Date\n"
+    parsed = imports.parse_sales_orders(
+        (header + '3000001,10,"400003-ST,WS",20,2026/11/12\n'   # SAP ships the combined code itself
+                  "3000001,11,400003-WS,10,2026/11/12\n"        # or one of the individual codes
+                  "3000001,12,400003-ST,30,2026/11/12\n").encode("utf-8"), known)
+    assert parsed.errors == []
+    assert [r.material_no for r in parsed.records] == ["400003-ST,WS", "400003-ST,WS", "400003-ST,WS"]
+
+
 def test_sales_orders_import_and_open_tons():
     res = post("sales-orders", mock("sap_sales_orders.csv"))
     assert res.status_code == 200

@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 
+from planning_data.market_aliases import codespec_aliases
 from planning_data.records import Forecast, QcLot, SalesOrder, StockRow
 
 MAX_BYTES = 5 * 1024 * 1024
@@ -191,8 +192,12 @@ def _open(kind: str, data: bytes, required: List[str], optional: Iterable[str] =
     return parsed, table
 
 
-def _material(parsed: Parsed, table: Table, line: int, cells, products: dict) -> Optional[str]:
+def _resolve_material(parsed: Parsed, table: Table, line: int, cells, products: dict, alias_map: dict) -> Optional[str]:
+    """The product code of a row: alias folding happens first ('400003-WS'
+    is one product with '400003-ST', see planning_data.market_aliases),
+    then the master membership check."""
     material = table.cell(cells, "Material Number").upper()
+    material = alias_map.get(material, material)
     if not material:
         parsed.error(line, "Material Number", "material number is empty")
         return None
@@ -214,6 +219,7 @@ def parse_stock(data: bytes, products: dict, stock_date: Optional[date] = None) 
     parsed, table = _open("stock", data, ["Material Number", "Unrestricted"], ["Stock Date", "SU"])
     if table is None:
         return parsed
+    alias_map = codespec_aliases()
     totals: Dict[str, float] = {}
     dates = set()
     for line, cells in table.rows:
@@ -223,7 +229,7 @@ def parse_stock(data: bytes, products: dict, stock_date: Optional[date] = None) 
                 dates.add(parse_date(day))
             except BadCell as exc:
                 parsed.error(line, "Stock Date", str(exc))
-        material = _material(parsed, table, line, cells, products)
+        material = _resolve_material(parsed, table, line, cells, products, alias_map)
         try:
             quantity = tons(table.cell(cells, "Unrestricted"), table.cell(cells, "SU"))
             if quantity < 0:
@@ -258,6 +264,7 @@ def parse_qc_lots(data: bytes, products: dict) -> Parsed:
     parsed, table = _open("qc-lots", data, required, ["Usage Decision", "SU", "Batch Number"])
     if table is None:
         return parsed
+    alias_map = codespec_aliases()
     seen: Dict[str, int] = {}
     for line, cells in table.rows:
         lot_no = table.cell(cells, "Inspection Lot")
@@ -268,7 +275,8 @@ def parse_qc_lots(data: bytes, products: dict) -> Parsed:
             parsed.error(line, "Inspection Lot", "lot %s is already on line %d" % (lot_no, seen[lot_no]))
             continue
         seen[lot_no] = line
-        material = table.cell(cells, "Material Number").upper()
+        raw_material = table.cell(cells, "Material Number").upper()
+        material = alias_map.get(raw_material, raw_material)
         batch = table.cell(cells, "Batch Number").upper()
         suffix = _BATCH_MARKET.search(batch) if batch else None
         market = (material.split("-")[0] + "-" + suffix.group(1)) if suffix and material else None
@@ -311,6 +319,7 @@ def parse_sales_orders(data: bytes, products: dict) -> Parsed:
     parsed, table = _open("sales-orders", data, required, ["Delivered Qty", "Status", "SU", "Ship-to Code"])
     if table is None:
         return parsed
+    alias_map = codespec_aliases()
     seen: Dict[tuple, int] = {}
     for line, cells in table.rows:
         order_no = table.cell(cells, "Sales Order Number")
@@ -329,7 +338,7 @@ def parse_sales_orders(data: bytes, products: dict) -> Parsed:
         except BadCell as exc:
             parsed.error(line, column, str(exc))
             continue
-        material = _material(parsed, table, line, cells, products)
+        material = _resolve_material(parsed, table, line, cells, products, alias_map)
         unit = table.cell(cells, "SU")
         column = "Order Qty"
         try:

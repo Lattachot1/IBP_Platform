@@ -65,7 +65,8 @@ def _upper(value: Optional[str]) -> Optional[str]:
 class ProductCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    material_no: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9._-]+$")
+    # the comma allows a combined market spec ('400003-ST,WS') as one product
+    material_no: str = Field(min_length=1, max_length=40, pattern=r"^[A-Za-z0-9._,-]+$")
     description: str = Field(min_length=1, max_length=100)
     group_code: str = Field(min_length=1, max_length=20)
     min_stock_tons: float = Field(default=0.0, ge=0, le=MAX_TONS, allow_inf_nan=False)

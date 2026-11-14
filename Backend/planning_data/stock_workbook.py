@@ -19,6 +19,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from planning_data.imports import Parsed
+from planning_data.market_aliases import codespec_aliases
 from planning_data.records import StockRow
 
 _BATCH_MARKET = re.compile(r"([A-Z]+)$")
@@ -35,6 +36,7 @@ def parse(workbook, products: dict) -> Parsed:
     and left out, so one stray row cannot block the rest of the file.
     """
     parsed = Parsed(kind="stock-workbook")
+    alias_map = codespec_aliases()
     latest: Optional[date] = None
     tons: dict = {}                   # product code -> unrestricted tons
     for row_no, row in enumerate(workbook["InventoryDaily_ZMMR021"].iter_rows(min_row=2, values_only=True),
@@ -49,6 +51,8 @@ def parse(workbook, products: dict) -> Parsed:
         if latest is None or day > latest:
             latest, tons = day, {}
         code = _code_of(row)
+        if code is not None:
+            code = alias_map.get(code, code)      # a combined spec is one product
         if code is None:
             parsed.warn(row_no, "Mat + Spec.",
                         "no readable product code - open and save the workbook in Excel first")

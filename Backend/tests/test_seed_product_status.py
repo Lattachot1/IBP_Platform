@@ -54,14 +54,22 @@ def test_codespec_products(tmp_path):
     write_catalog(catalog)
     products, skipped = codespec_products(catalog, GROUPS)
     assert products_of(products) == {
-        ("400003-ST", "BR150", "BR150(MN) ST"),       # the comma spec expands, the duplicate is once
-        ("400003-WS", "BR150", "BR150(MN) ST"),
+        ("400003-ST,WS", "BR150", "BR150(MN) ST"),    # the combined spec is the product...
         ("400003-HM", "BR150", "BR150(MN) - ML 41-48 HM"),
         ("401094-SH", "BR150", "BR150GN (MN) SH"),
         ("400752-SS", "BR360B", "BR360B (MN)"),        # the company's group wins over the raw one
         ("401091-MI", "BR150LGN", "BR150LGN (GPS)-MI"),
+        # ...and the single '400003-ST' row is its duplicate: dropped
     }
     assert skipped == {"X-200": 1}
+
+
+def test_codespec_aliases_fold_the_sap_codes_into_the_combined_product(tmp_path):
+    from planning_data.market_aliases import codespec_aliases
+
+    catalog = tmp_path / "product_codespec_effective.csv"
+    write_catalog(catalog)
+    assert codespec_aliases(catalog) == {"400003-ST": "400003-ST,WS", "400003-WS": "400003-ST,WS"}
 
 
 def test_codespec_reads_the_real_catalog():
@@ -72,7 +80,7 @@ def test_codespec_reads_the_real_catalog():
     if not catalog.exists():
         pytest.skip("the client catalog is not on this machine")
     products, skipped = codespec_products(None, GROUPS)
-    assert len(products) >= 80 and all("-" in p.material_no for p in products)
+    assert len(products) >= 60 and all("-" in p.material_no for p in products)
     assert all(p.group_code in GROUPS for p in products)
     assert skipped == {}
 

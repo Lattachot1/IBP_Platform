@@ -18,7 +18,7 @@ from planning_data import products, stock_workbook, store
 
 client = TestClient(main.app)
 
-PRODUCTS = {"400003-ST": None, "400003-NN": None, "400003-HM": None}
+PRODUCTS = ("400003-ST,WS", "400003-NN", "400003-HM")
 
 
 def workbook_master():
@@ -32,10 +32,13 @@ def workbook_master():
 
 @pytest.fixture(autouse=True)
 def memory_mode(monkeypatch):
-    """Memory mode: the market-level master, empty planning tables."""
+    """Memory mode: the market-level master, empty planning tables, and the
+    catalog aliases folding the SAP codes into the combined product."""
     monkeypatch.setattr(database, "_conn_params", None)
     monkeypatch.setattr(products, "_memory_store", products.MemoryProductStore(workbook_master()))
     monkeypatch.setattr(store, "_memory_store", store.MemoryPlanningStore())
+    monkeypatch.setattr(stock_workbook, "codespec_aliases",
+                        lambda: {"400003-ST": "400003-ST,WS", "400003-WS": "400003-ST,WS"})
 
 
 def build_workbook() -> openpyxl.Workbook:
@@ -48,6 +51,7 @@ def build_workbook() -> openpyxl.Workbook:
     day = lambda d: datetime(2026, 11, d)  # noqa: E731
     ws.append([day(13), 1203, "400003", "UBEPOL AE150MN", "908301HM", None, "400003-ST", "TSLW", "KG", 105000])
     ws.append([day(13), 1203, "400003", "UBEPOL AE150MN", "908301HM", None, "400003-ST", "TSLW2", "KG", 5000])
+    ws.append([day(13), 1203, "400003", "UBEPOL AE150MN", "908152WS", None, "400003-WS", "TSLW", "KG", 10000])  # alias: folds into 400003-ST
     ws.append([day(13), 1203, "400003", "UBEPOL AE150MN", "908152NN", None, "400003-NN", "TSLW", "KG", 23100])
     ws.append([day(13), 1203, "400003", "UBEPOL AE150MN", "908301HM", None, None, "TSLW", "KG", 7000])  # cache empty -> batch fallback
     ws.append([day(13), 1203, "400003", "UBEPOL AE150MN", "908152NN", None, "400003-NN", "QC", "KG", None])  # no unrestricted
@@ -57,7 +61,7 @@ def build_workbook() -> openpyxl.Workbook:
 
 
 def products_index():
-    return {code: None for code in PRODUCTS}
+    return {code: None for code in ("400003-ST", "400003-WS", "400003-NN", "400003-HM", "400003-ST,WS")}
 
 
 def test_parse_keeps_the_latest_day_per_product_in_tons():
@@ -65,7 +69,8 @@ def test_parse_keeps_the_latest_day_per_product_in_tons():
     assert parsed.snapshot_date == datetime(2026, 11, 13).date()
     assert parsed.errors == []
     rows = {r.material_no: r.on_hand_tons for r in parsed.records}
-    assert rows == {"400003-ST": 110.0, "400003-NN": 23.1, "400003-HM": 7.0}   # KG / 1000, summed
+    # KG / 1000, summed: the ST and WS rows fold into the combined product
+    assert rows == {"400003-ST,WS": 120.0, "400003-NN": 23.1, "400003-HM": 7.0}
     assert any("unknown product 999999-XY" in w.message for w in parsed.warnings)
 
 
@@ -97,4 +102,4 @@ def test_endpoint_imports_the_workbook_stock(monkeypatch, tmp_path):
     snapshot = client.get("/api/v1/stock").json()
     assert snapshot["snapshot_date"] == "2026-11-13"
     on_hand = {r["material_no"]: r["on_hand_tons"] for r in snapshot["rows"]}
-    assert on_hand["400003-ST"] == 110.0
+    assert on_hand["400003-ST,WS"] == 120.0
