@@ -397,12 +397,15 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
             m.Add(cl[d] == sum(start_c[j] for j in range(max(0, d - clean_days + 1), d + 1)))
             for j in range(max(0, d - clean_days + 1), d):
                 m.AddBoolOr([start_c[d].Not(), start_c[j].Not()])
-    # ages = production days since last cleaning (reset to 0 by cleaning)
-    age12 = [m.NewIntVar(0, rx12_max, f"a12_{d}") for d in Hr]
-    age34 = [m.NewIntVar(0, rx12_max, f"a34_{d}") for d in Hr]
+    # ages = production days since last cleaning (reset to 0 by cleaning).
+    # The lists run to H (not H-1) so the LAST day's production counts too:
+    # an age that only reaches 60 in the morning would let the final day
+    # push a pair past its limit, which the evaluator then rightly flagged.
+    age12 = [m.NewIntVar(0, rx12_max, f"a12_{d}") for d in range(H + 1)]
+    age34 = [m.NewIntVar(0, rx12_max, f"a34_{d}") for d in range(H + 1)]
     m.Add(age12[0] == age12_0)
     m.Add(age34[0] == age34_0)
-    for d in range(H - 1):
+    for d in range(H):
         m.Add(age12[d + 1] == age12[d] + run12[d]).OnlyEnforceIf(cl12[d].Not())
         m.Add(age12[d + 1] == 0).OnlyEnforceIf(cl12[d])
         m.Add(age34[d + 1] == age34[d] + run34[d]).OnlyEnforceIf(cl34[d].Not())
@@ -464,8 +467,8 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     vcr_v = [val(vcr_main[d]) == 1 for d in Hr]
     start_vcr_v = [val(vcr_start[d]) == 1 for d in Hr]
     end_vcr_v = [val(vcr_end[d]) == 1 for d in Hr]
-    age12_v = [val(age12[d]) for d in Hr]
-    age34_v = [val(age34[d]) for d in Hr]
+    age12_v = [val(age12[d]) for d in Hr] + [val(age12[H])]   # day starts, then the true end age
+    age34_v = [val(age34[d]) for d in Hr] + [val(age34[H])]
 
     produced = {g: sum(val(prod[d][gi[g]]) for d in Hr) for g in grades}
     plan_out = planning.report(plan_model, val, dates) if plan_model is not None else None
