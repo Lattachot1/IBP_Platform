@@ -17,8 +17,9 @@ planning data (planning_data.store): released stock, lots in QC, open
 orders, the monthly group forecast and the product master.
 
 Stock logic per product and day d (tons, d = 0 is the plan start):
-  available(d) = stock at the snapshot + QC releases up to d
-                 + production up to d - qc_days - open orders due up to d
+  available(d) = starting stock (the hand-entered adjustment when there is
+                 one, else the imported snapshot value) + QC releases up
+                 to d + production up to d - qc_days - open orders due up to d
 Orders due before the plan start count as due on day 0. Output enters
 stock qc_days after it is produced, so production in the last qc_days of
 the horizon only serves the forecast tier.
@@ -135,11 +136,21 @@ def build_inputs(groups: List[str], products, snapshot, lots, orders, forecasts,
             warnings.append("Inactive product %s still has open orders: they are planned" % p.material_no)
     known = {p.material_no for p in planned}
 
-    # stock snapshot
+    # stock snapshot; a hand-entered adjustment wins over the imported value
+    # (and stands alone when nothing has been imported yet)
     snapshot_date = snapshot.snapshot_date
     stock = {r.material_no: r.on_hand_tons for r in snapshot.rows} if snapshot_date else {}
+    adjusted = {a.material_no: a.adjust_tons for a in snapshot.adjustments if a.material_no in known}
+    stock.update(adjusted)
     if snapshot_date is None:
-        warnings.append("No stock snapshot on or before %s: starting stock taken as 0" % start)
+        if adjusted:
+            warnings.append("No stock snapshot on or before %s: %d materials use hand-entered stock, "
+                            "the rest start at 0" % (start, len(adjusted)))
+        else:
+            warnings.append("No stock snapshot on or before %s: starting stock taken as 0" % start)
+    elif adjusted:
+        warnings.append("%d materials use hand-entered stock instead of the snapshot of %s"
+                        % (len(adjusted), snapshot_date))
     elif (start - snapshot_date).days > STALE_STOCK_DAYS:
         warnings.append("Stock snapshot is %d days old (%s)" % ((start - snapshot_date).days, snapshot_date))
 

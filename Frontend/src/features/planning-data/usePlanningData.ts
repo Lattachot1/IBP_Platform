@@ -15,7 +15,7 @@ import {
   listGroups,
   listProducts,
   updateProduct,
-  updateStock,
+  setStockAdjustment as putStockAdjustment,
 } from './api';
 import type {
   Forecast,
@@ -199,20 +199,23 @@ export function usePlanningViews() {
     void refresh();
   }, [refresh]);
 
-  const snapshotDate = stock?.snapshot_date ?? null;
-  /** A hand edit of one stock row; resolves to an error message, or null when saved. */
-  const editStock = useCallback(async (materialNo: string, tons: number): Promise<string | null> => {
-    if (!snapshotDate) return 'No stock snapshot to edit';
+  /** Hand-enter one material's stock (null clears it back to the imported
+   * value); resolves to an error message, or null when saved. */
+  const setStockAdjustment = useCallback(async (materialNo: string, tons: number | null): Promise<string | null> => {
     try {
-      const row = await updateStock(snapshotDate, materialNo, tons);
-      setStock((s) => (s ? { ...s, rows: s.rows.map((r) => (r.material_no === materialNo ? row : r)) } : s));
+      const row = await putStockAdjustment(materialNo, tons);
+      setStock((s) => {
+        if (!s) return s;
+        const others = s.adjustments.filter((a) => a.material_no !== materialNo);
+        return { ...s, adjustments: row ? [...others, row] : others };
+      });
       return null;
     } catch (err) {
       return describeFailure(err);
     }
-  }, [snapshotDate]);
+  }, []);
 
-  return { stock, lots, orders, forecasts, loading, error, refresh, editStock };
+  return { stock, lots, orders, forecasts, loading, error, refresh, setStockAdjustment };
 }
 
 export type PlanningViewsState = ReturnType<typeof usePlanningViews>;

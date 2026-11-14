@@ -48,6 +48,25 @@ BEGIN
 END
 GO
 
+-- Hand-entered on-hand stock per material: the planner's corrected figure,
+-- used INSTEAD OF the imported snapshot value, and also when no snapshot has
+-- been imported at all (e.g. before the SAP data arrives). Deliberately not
+-- dated: it is what the planner guarantees right now, so a stock import
+-- never touches these rows. Clear it to fall back to the import.
+IF OBJECT_ID(N'dbo.StockAdjustments', N'U') IS NULL
+BEGIN
+    CREATE TABLE dbo.StockAdjustments (
+        MaterialNo    NVARCHAR(40)  NOT NULL,
+        AdjustTons    DECIMAL(12,3) NOT NULL,
+        UpdatedAt     DATETIME2     NOT NULL CONSTRAINT DF_StockAdjustments_UpdatedAt DEFAULT SYSUTCDATETIME(),
+        UpdatedBy     NVARCHAR(50)  NOT NULL,
+        CONSTRAINT PK_StockAdjustments PRIMARY KEY (MaterialNo),
+        CONSTRAINT FK_StockAdjustments_Products FOREIGN KEY (MaterialNo) REFERENCES dbo.Products(MaterialNo),
+        CONSTRAINT CK_StockAdjustments_Tons CHECK (AdjustTons >= 0)
+    );
+END
+GO
+
 -- Produced lots waiting for QC. A lot counts as incoming stock when its
 -- ReleaseDate is after the snapshot date and it was not rejected.
 IF OBJECT_ID(N'dbo.QcLots', N'U') IS NULL

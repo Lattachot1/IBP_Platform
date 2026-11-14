@@ -12,7 +12,7 @@ how many rows were inserted / updated (dry_run=true: what would happen,
 nothing is kept). Materials must already be in the product master.
 
 No login yet (roadmap step 5): anyone who can reach the backend can import
-or hand-edit stock.
+stock or hand-enter stock adjustments.
 """
 
 import logging
@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field
 
 from optimization.engine import plant_groups
 from planning_data import imports, products, store
-from planning_data.records import Forecast, QcLot, SalesOrder, StockRow, StockSnapshot
+from planning_data.records import Forecast, QcLot, SalesOrder, StockAdjustment, StockSnapshot
 from planning_data.sql import StoreUnavailable, WriteRejected
 
 log = logging.getLogger("ibp.api.planning")
@@ -142,27 +142,26 @@ async def handle_import_forecasts(request: Request, dry_run: bool = False, updat
 
 
 # ----------------------------------------------------------------------------
-# hand edit
+# hand-entered stock
 # ----------------------------------------------------------------------------
-class StockUpdate(BaseModel):
-    tons: float = Field(ge=0)
+class StockAdjustmentUpdate(BaseModel):
+    tons: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False)
 
 
-@router.patch("/api/v1/stock/{stock_date}/{material_no}", response_model=StockRow)
-def handle_update_stock(stock_date: date, material_no: str, req: StockUpdate) -> StockRow:
-    """Hand-edit one material's on-hand tons in an existing snapshot (a
-    correction the SAP file does not have yet). One column, one truth: the
-    next import of the same date overwrites the edit again, so re-importing
-    the file is the way back to the imported value."""
+@router.put("/api/v1/stock-adjustments/{material_no}", response_model=Optional[StockAdjustment])
+def handle_set_stock_adjustment(material_no: str, req: StockAdjustmentUpdate,
+                                updated_by: str = _editor()) -> Optional[StockAdjustment]:
+    """Hand-enter one material's on-hand stock: the planner's corrected
+    figure, used instead of the imported snapshot value and also when no
+    snapshot has been imported at all (e.g. before the SAP feed arrives).
+    `tons: null` clears the adjustment back to the imported value."""
     key = material_no.strip().upper()
     if key not in _product_index():
         raise HTTPException(status_code=422, detail="%s is not in the product master" % key)
     try:
-        return store.get_store().update_stock_row(stock_date, key, req.tons)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
+        return store.get_store().set_stock_adjustment(key, req.tons, updated_by)
     except StoreUnavailable:
-        raise _unavailable("could not update the stock row")
+        raise _unavailable("could not save the stock adjustment")
 
 
 # ----------------------------------------------------------------------------
@@ -170,7 +169,8 @@ def handle_update_stock(stock_date: date, material_no: str, req: StockUpdate) ->
 # ----------------------------------------------------------------------------
 @router.get("/api/v1/stock", response_model=StockSnapshot)
 def handle_read_stock(on: Optional[date] = None) -> StockSnapshot:
-    """The latest stock snapshot (on or before `on` when given)."""
+    """The latest stock snapshot (on or before `on` when given) plus every
+    hand-entered stock adjustment."""
     try:
         return store.get_store().stock_snapshot(on)
     except StoreUnavailable:

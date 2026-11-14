@@ -17,18 +17,20 @@ interface Draft {
   description: string;
   group_code: string;
   min_stock_tons: string;
+  adjust_tons: string;   // '' = no hand adjustment (the imported value is used)
 }
 
-const draftOf = (p: Product): Draft => ({
+const draftOf = (p: Product, adjust: number | null): Draft => ({
   description: p.description,
   group_code: p.group_code,
   min_stock_tons: String(p.min_stock_tons),
+  adjust_tons: adjust === null ? '' : String(adjust),
 });
 
-/** A minimum stock typed by the planner, or an error text. */
-function parseMinimum(text: string): number | string {
+/** Tons typed by the planner (minimum stock, stock adjustment), or an error text. */
+function parseTons(text: string, label: string): number | string {
   const value = Number(text);
-  if (text.trim() === '' || !Number.isFinite(value) || value < 0) return 'Minimum stock must be a number of tons, 0 or more';
+  if (text.trim() === '' || !Number.isFinite(value) || value < 0) return `${label} must be a number of tons, 0 or more`;
   return value;
 }
 
@@ -49,7 +51,7 @@ function AddProductForm({ master, onDone }: { master: ProductMasterState; onDone
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
-    const minimum = parseMinimum(draft.min_stock_tons);
+    const minimum = parseTons(draft.min_stock_tons, 'Minimum stock');
     if (typeof minimum === 'string') return setError(minimum);
     if (!draft.material_no.trim() || !draft.description.trim()) return setError('Material number and description are required');
     const failure = await master.add({ ...draft, min_stock_tons: minimum });
@@ -102,76 +104,14 @@ function Status({ value }: { value: string }) {
 
 /** The planning inputs of one product, summed from the imported data. */
 function figuresOf(p: Product, views: PlanningViewsState) {
-  const onHand = views.stock?.rows.find((r) => r.material_no === p.material_no)?.on_hand_tons ?? null;
+  const base = views.stock?.rows.find((r) => r.material_no === p.material_no)?.on_hand_tons ?? null;
+  const adjust = views.stock?.adjustments.find((a) => a.material_no === p.material_no)?.adjust_tons ?? null;
+  const onHand = adjust ?? base;   // what the plan actually starts from
   const inQcTons = views.lots.filter((l) => l.material_no === p.material_no && l.status === 'in_qc').reduce((s, l) => s + l.tons, 0);
   const open = views.orders.filter((o) => o.material_no === p.material_no && o.status === 'open');
   const openTons = open.reduce((s, o) => s + o.open_tons, 0);
   const nextDue = open.length ? open.map((o) => o.due_date).sort()[0] : null;
-  return { onHand, inQcTons, openTons, nextDue };
-}
-
-/** The on-hand figure of a product: click to hand-edit it. The next import of
- * the same snapshot date overwrites the edit again (the imported file is the truth). */
-function StockCell({ product, views }: { product: Product; views: PlanningViewsState }) {
-  const row = views.stock?.rows.find((r) => r.material_no === product.material_no);
-  const editable = !views.loading && !!views.stock?.snapshot_date && row !== undefined;
-  const [editing, setEditing] = useState(false);
-  const [value, setValue] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  if (!editable) {
-    return <span className="font-mono">{views.loading ? '…' : row === undefined ? '—' : formatNumber(row.on_hand_tons)}</span>;
-  }
-  const short = row.on_hand_tons < product.min_stock_tons;
-  const save = async () => {
-    if (saving) return;
-    const tons = Number(value);
-    if (value.trim() === '' || !Number.isFinite(tons) || tons < 0) {
-      setError('On-hand stock must be a number of tons, 0 or more');
-      return;
-    }
-    if (tons === row.on_hand_tons) {
-      setEditing(false);
-      return;
-    }
-    setSaving(true);
-    const failure = await views.editStock(product.material_no, tons);
-    setSaving(false);
-    if (failure) setError(failure);
-    else setEditing(false);
-  };
-  if (editing) {
-    return (
-      <span className="inline-flex flex-col items-end gap-0.5">
-        <input
-          aria-label={`On-hand stock of ${product.material_no}`}
-          className={`${input} w-24 text-right`}
-          inputMode="decimal"
-          autoFocus
-          disabled={saving}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void save();
-            if (e.key === 'Escape') setEditing(false);
-          }}
-          onBlur={() => { if (!error) void save(); }}
-        />
-        {error && <span role="alert" className="text-[10px] text-rose-600">{error}</span>}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className={`font-mono hover:text-blue-600 hover:underline ${short ? 'text-rose-600 font-bold' : ''}`}
-      title="Click to edit the on-hand stock (the next import of this snapshot date overwrites it again)"
-      onClick={() => { setValue(String(row.on_hand_tons)); setError(null); setEditing(true); }}
-    >
-      {formatNumber(row.on_hand_tons)}
-    </button>
-  );
+  return { base, adjust, onHand, inQcTons, openTons, nextDue };
 }
 
 /** A small table inside an expanded row; scrollable so long lists stay compact. */
@@ -203,7 +143,7 @@ function DetailRow({ p, master, views }: { p: Product; master: ProductMasterStat
   const groupDisp = master.groups.find((g) => g.id === p.group_code)?.disp ?? p.group_code;
   return (
     <tr className="bg-slate-50/60">
-      <td colSpan={10} className="py-3 px-6">
+      <td colSpan={11} className="py-3 px-6">
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
           <MiniTable caption="QC lots" empty="No QC lots for this product" head={
             <tr><th className={th}>Lot</th><th className={`${th} text-right`}>Tons</th><th className={th}>Produced</th><th className={th}>Release</th><th className={th}>Status</th></tr>
@@ -288,26 +228,42 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
     (p) => (!groupFilter || p.group_code === groupFilter) && (showInactive || p.is_active),
   );
   const activeCount = master.products.filter((p) => p.is_active).length;
+  const adjustmentCount = views.stock?.adjustments.length ?? 0;
 
   const startEdit = (p: Product) => {
     setEditing(p.material_no);
-    setDraft(draftOf(p));
+    // the adjust box pre-fills with the current adjustment ('' = none); it
+    // works with or without an imported snapshot
+    setDraft(draftOf(p, figuresOf(p, views).adjust));
     setRowError(null);
   };
 
   const saveEdit = async (p: Product) => {
     if (!draft) return;
-    const minimum = parseMinimum(draft.min_stock_tons);
+    const minimum = parseTons(draft.min_stock_tons, 'Minimum stock');
     if (typeof minimum === 'string') return setRowError({ material: p.material_no, text: minimum });
+    const adjust = figuresOf(p, views).adjust;
+    let tons: number | null = null;
+    if (draft.adjust_tons.trim() !== '') {
+      const parsed = parseTons(draft.adjust_tons, 'Stock adjust');
+      if (typeof parsed === 'string') return setRowError({ material: p.material_no, text: parsed });
+      tons = parsed;
+    }
     const change = {
       ...(draft.description !== p.description && { description: draft.description }),
       ...(draft.group_code !== p.group_code && { group_code: draft.group_code }),
       ...(minimum !== p.min_stock_tons && { min_stock_tons: minimum }),
     };
-    if (Object.keys(change).length === 0) return setEditing(null);
-    const failure = await master.save(p.material_no, change);
-    if (failure) setRowError({ material: p.material_no, text: failure });
-    else setEditing(null);
+    if (Object.keys(change).length > 0) {
+      const failure = await master.save(p.material_no, change);
+      if (failure) return setRowError({ material: p.material_no, text: failure });
+    }
+    // the hand-entered stock wins over the import; empty clears it back
+    if (tons !== adjust) {
+      const failure = await views.setStockAdjustment(p.material_no, tons);
+      if (failure) return setRowError({ material: p.material_no, text: failure });
+    }
+    setEditing(null);
   };
 
   const toggleActive = async (p: Product) => {
@@ -330,7 +286,7 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
           <p className="text-[11px] text-slate-400 mt-0.5">
             {views.loading
               ? 'Loading planning data…'
-              : `Stock is ${views.stock?.snapshot_date ? `the snapshot of ${views.stock.snapshot_date}` : 'not imported yet'} · ${views.lots.filter((l) => l.status === 'in_qc').length} lots in QC · ${views.orders.filter((o) => o.status === 'open').length} open orders · expand a row for its details`}
+              : `Stock is ${views.stock?.snapshot_date ? `the snapshot of ${views.stock.snapshot_date}` : 'not imported yet'} · a Stock adjust value wins over it (enter one when the system data is not in yet)${adjustmentCount ? ` · ${adjustmentCount} hand adjustment${adjustmentCount === 1 ? '' : 's'} active` : ''} · ${views.lots.filter((l) => l.status === 'in_qc').length} lots in QC · ${views.orders.filter((o) => o.status === 'open').length} open orders · expand a row for its details`}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -382,7 +338,8 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
               <th className="py-3 px-4">Description</th>
               <th className="py-3 px-4">Group</th>
               <th className="py-3 px-4 text-right">Min stock (t)</th>
-              <th className="py-3 px-4 text-right">On hand (t)</th>
+              <th className="py-3 px-4 text-right">Stock (t)</th>
+              <th className="py-3 px-4 text-right">Stock adjust (t)</th>
               <th className="py-3 px-4 text-right">In QC (t)</th>
               <th className="py-3 px-4 text-right">Open orders (t)</th>
               <th className="py-3 px-4">Status</th>
@@ -391,14 +348,15 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
           </thead>
           <tbody className="divide-y divide-slate-200">
             {master.error ? (
-              <tr><td colSpan={10} className="py-8 text-center text-rose-600">Could not load the product master: {master.error}</td></tr>
+              <tr><td colSpan={11} className="py-8 text-center text-rose-600">Could not load the product master: {master.error}</td></tr>
             ) : shown.length === 0 ? (
-              <tr><td colSpan={10} className="py-8 text-center text-slate-400">{master.loading ? 'Loading products…' : 'No products to show'}</td></tr>
+              <tr><td colSpan={11} className="py-8 text-center text-slate-400">{master.loading ? 'Loading products…' : 'No products to show'}</td></tr>
             ) : (
               shown.map((p) => {
                 const isEditing = editing === p.material_no && draft !== null;
                 const saving = master.busy === p.material_no;
                 const fig = figuresOf(p, views);
+                const short = fig.onHand !== null && fig.onHand < p.min_stock_tons;
                 const isExpanded = expanded === p.material_no;
                 return (
                   <Fragment key={p.material_no}>
@@ -430,8 +388,27 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
                             value={draft.min_stock_tons} onChange={(e) => setDraft({ ...draft, min_stock_tons: e.target.value })} />
                         ) : formatNumber(p.min_stock_tons)}
                       </td>
-                      <td className="py-2.5 px-4 text-right">
-                        <StockCell product={p} views={views} />
+                      <td className="py-2.5 px-4 text-right font-mono">
+                        {views.loading ? '…' : fig.base === null ? '—' : (
+                          <span className={fig.adjust === null && short ? 'text-rose-600 font-bold' : ''}>
+                            {formatNumber(fig.base)}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2.5 px-4 text-right font-mono">
+                        {isEditing ? (
+                          <input aria-label={`Stock adjust of ${p.material_no}`} className={`${input} w-24 text-right`} inputMode="decimal"
+                            placeholder="—"
+                            title="Hand-entered stock: the plan uses this instead of the Stock column (clear it to fall back)"
+                            value={draft.adjust_tons} onChange={(e) => setDraft({ ...draft, adjust_tons: e.target.value })} />
+                        ) : views.loading ? '…' : fig.adjust === null ? (
+                          <span className="text-slate-300">—</span>
+                        ) : (
+                          <span title="Hand-entered stock: the plan uses this instead of the Stock column (Edit the row and clear it to fall back)"
+                            className={short ? 'text-rose-600 font-bold' : 'font-bold text-sky-700'}>
+                            {formatNumber(fig.adjust)}
+                          </span>
+                        )}
                       </td>
                       <td className="py-2.5 px-4 text-right font-mono">
                         {views.loading ? '…' : fig.inQcTons === 0 ? '—' : formatNumber(fig.inQcTons)}

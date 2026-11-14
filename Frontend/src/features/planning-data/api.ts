@@ -3,7 +3,7 @@
  * /api/v1/products, /api/v1/imports/*, /api/v1/{stock,qc-lots,sales-orders,forecasts}.
  */
 
-import { getJson, patchJson, postJson, postRaw } from '@/lib/apiClient';
+import { getJson, patchJson, postJson, postRaw, putJson } from '@/lib/apiClient';
 import { ApiError } from '@/lib/apiError';
 
 import type {
@@ -17,7 +17,7 @@ import type {
   ProductGroup,
   QcLot,
   SalesOrder,
-  StockRow,
+  StockAdjustment,
   StockSnapshot,
 } from './types';
 
@@ -76,9 +76,10 @@ export async function importCsv(kind: ImportKind, file: Blob | string, options: 
 
 export const getStock = () => getJson<StockSnapshot>('/api/v1/stock');
 
-/** A hand edit of one stock row (PATCH /api/v1/stock/{date}/{material}); the next import of the same date overwrites it again. */
-export const updateStock = (stockDate: string, materialNo: string, tons: number) =>
-  patchJson<StockRow>(`/api/v1/stock/${stockDate}/${encodeURIComponent(materialNo)}`, { tons });
+/** Hand-enter one material's stock (PUT /api/v1/stock-adjustments/{material});
+ * the plan uses it instead of the imported value; tons=null clears it again. */
+export const setStockAdjustment = (materialNo: string, tons: number | null) =>
+  putJson<StockAdjustment | null>(`/api/v1/stock-adjustments/${encodeURIComponent(materialNo)}`, { tons });
 export const getQcLots = () => getJson<QcLot[]>('/api/v1/qc-lots');
 export const getSalesOrders = () => getJson<SalesOrder[]>('/api/v1/sales-orders');
 export const getForecasts = () => getJson<Forecast[]>('/api/v1/forecasts');

@@ -17,7 +17,7 @@ import main
 from optimization import engine, planning
 from optimization.schemas import OptimizeRequest
 from planning_data import products, store
-from planning_data.records import Forecast, QcLot, SalesOrder, StockRow, StockSnapshot
+from planning_data.records import Forecast, QcLot, SalesOrder, StockAdjustment, StockRow, StockSnapshot
 
 client = TestClient(main.app)
 GROUPS = ["BR150", "BR150B", "BR360B", "VCR412", "VCR617", "BR150L"]
@@ -71,6 +71,29 @@ def test_qc_lots_still_in_qc_or_released_after_the_snapshot_count():
     inputs = build([product("A")], snapshot(date(2026, 11, 6), A=100), lots=lots)
     assert inputs.products[0].start_stock == 100
     assert inputs.products[0].receipts == {0: 60.0, 2: 60.0}
+
+
+def test_hand_stock_adjustments_win_over_the_snapshot_value():
+    snap = snapshot(START, A=40, B=10)
+    snap.adjustments = [StockAdjustment(material_no="A", adjust_tons=55)]
+    inputs = build([product("A"), product("B")], snap)
+    assert inputs.products[0].start_stock == 55                 # the adjustment wins
+    assert inputs.products[1].start_stock == 10                 # the others keep the import
+    assert any("1 materials use hand-entered stock instead of the snapshot" in w for w in inputs.warnings)
+
+
+def test_hand_stock_adjustments_stand_alone_without_a_snapshot():
+    snap = StockSnapshot(adjustments=[StockAdjustment(material_no="A", adjust_tons=55)])
+    inputs = build([product("A")], snap)
+    assert inputs.products[0].start_stock == 55
+    assert any("No stock snapshot" in w and "hand-entered" in w for w in inputs.warnings)
+
+
+def test_an_adjustment_for_an_unknown_product_is_ignored():
+    snap = StockSnapshot(adjustments=[StockAdjustment(material_no="ZZ", adjust_tons=55)])
+    inputs = build([product("A")], snap)
+    assert inputs.products[0].start_stock == 0
+    assert not any("hand-entered" in w for w in inputs.warnings)
 
 
 def test_forecast_consumed_by_orders_manual_overrides_engine_and_last_month_prorated():
