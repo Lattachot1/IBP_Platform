@@ -17,13 +17,16 @@ says which line and column. Warnings never block an import.
 import csv
 import io
 import math
+import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Dict, Iterable, List, Optional
 
+from planning_data.market_aliases import codespec_aliases
 from planning_data.records import Forecast, QcLot, SalesOrder, StockRow
 
 MAX_BYTES = 5 * 1024 * 1024
+_BATCH_MARKET = re.compile(r"([A-Z]+)$")    # the batch name ends in the market code
 MAX_REPORTED = 200            # problems listed in a report; the count is always exact
 HEADER_SCAN_ROWS = 10
 DATE_FORMATS = ("%Y/%m/%d", "%Y-%m-%d", "%d.%m.%Y")
@@ -189,8 +192,12 @@ def _open(kind: str, data: bytes, required: List[str], optional: Iterable[str] =
     return parsed, table
 
 
-def _material(parsed: Parsed, table: Table, line: int, cells, products: dict) -> Optional[str]:
+def _resolve_material(parsed: Parsed, table: Table, line: int, cells, products: dict, alias_map: dict) -> Optional[str]:
+    """The product code of a row: alias folding happens first ('400003-WS'
+    is one product with '400003-ST', see planning_data.market_aliases),
+    then the master membership check."""
     material = table.cell(cells, "Material Number").upper()
+    material = alias_map.get(material, material)
     if not material:
         parsed.error(line, "Material Number", "material number is empty")
         return None
@@ -212,6 +219,7 @@ def parse_stock(data: bytes, products: dict, stock_date: Optional[date] = None) 
     parsed, table = _open("stock", data, ["Material Number", "Unrestricted"], ["Stock Date", "SU"])
     if table is None:
         return parsed
+    alias_map = codespec_aliases()
     totals: Dict[str, float] = {}
     dates = set()
     for line, cells in table.rows:
@@ -221,7 +229,7 @@ def parse_stock(data: bytes, products: dict, stock_date: Optional[date] = None) 
                 dates.add(parse_date(day))
             except BadCell as exc:
                 parsed.error(line, "Stock Date", str(exc))
-        material = _material(parsed, table, line, cells, products)
+        material = _resolve_material(parsed, table, line, cells, products, alias_map)
         try:
             quantity = tons(table.cell(cells, "Unrestricted"), table.cell(cells, "SU"))
             if quantity < 0:
@@ -247,11 +255,16 @@ def parse_stock(data: bytes, products: dict, stock_date: Optional[date] = None) 
 
 
 def parse_qc_lots(data: bytes, products: dict) -> Parsed:
-    """SAP inspection lots: blank usage decision = still in QC, A = released, R = rejected."""
+    """SAP inspection lots: blank usage decision = still in QC, A = released, R = rejected.
+
+    An optional 'Batch Number' column maps the lot to its market product:
+    the batch name ends in the market code (908301HM -> 400003-HM), which
+    wins over the bare Material Number when that is no longer a product."""
     required = ["Inspection Lot", "Material Number", "Lot Qty", "Production Date", "Release Date"]
-    parsed, table = _open("qc-lots", data, required, ["Usage Decision", "SU"])
+    parsed, table = _open("qc-lots", data, required, ["Usage Decision", "SU", "Batch Number"])
     if table is None:
         return parsed
+    alias_map = codespec_aliases()
     seen: Dict[str, int] = {}
     for line, cells in table.rows:
         lot_no = table.cell(cells, "Inspection Lot")
@@ -262,7 +275,19 @@ def parse_qc_lots(data: bytes, products: dict) -> Parsed:
             parsed.error(line, "Inspection Lot", "lot %s is already on line %d" % (lot_no, seen[lot_no]))
             continue
         seen[lot_no] = line
-        material = _material(parsed, table, line, cells, products)
+        raw_material = table.cell(cells, "Material Number").upper()
+        material = alias_map.get(raw_material, raw_material)
+        batch = table.cell(cells, "Batch Number").upper()
+        suffix = _BATCH_MARKET.search(batch) if batch else None
+        market = (material.split("-")[0] + "-" + suffix.group(1)) if suffix and material else None
+        if market and market in products:
+            material = market                 # the batch carries the market code
+        elif material in products:
+            pass
+        else:
+            parsed.error(line, "Material Number",
+                         "unknown material %s - add it to the product master first" % (material or "…"))
+            continue
         column = "Lot Qty"
         try:
             quantity = tons(table.cell(cells, "Lot Qty"), table.cell(cells, "SU"))
@@ -291,9 +316,10 @@ def parse_qc_lots(data: bytes, products: dict) -> Parsed:
 def parse_sales_orders(data: bytes, products: dict) -> Parsed:
     """SAP sales order items. Items missing from a file are left as they are."""
     required = ["Sales Order Number", "Sales Order Item", "Material Number", "Order Qty", "Req. Delivery Date"]
-    parsed, table = _open("sales-orders", data, required, ["Delivered Qty", "Status", "SU"])
+    parsed, table = _open("sales-orders", data, required, ["Delivered Qty", "Status", "SU", "Ship-to Code"])
     if table is None:
         return parsed
+    alias_map = codespec_aliases()
     seen: Dict[tuple, int] = {}
     for line, cells in table.rows:
         order_no = table.cell(cells, "Sales Order Number")
@@ -312,7 +338,7 @@ def parse_sales_orders(data: bytes, products: dict) -> Parsed:
         except BadCell as exc:
             parsed.error(line, column, str(exc))
             continue
-        material = _material(parsed, table, line, cells, products)
+        material = _resolve_material(parsed, table, line, cells, products, alias_map)
         unit = table.cell(cells, "SU")
         column = "Order Qty"
         try:
@@ -337,8 +363,10 @@ def parse_sales_orders(data: bytes, products: dict) -> Parsed:
         if material:
             if status == "open" and not products[material].is_active:
                 parsed.warn(line, "Material Number", "open order for the inactive product %s" % material)
+            ship_to = table.cell(cells, "Ship-to Code")
             parsed.records.append(SalesOrder(order_no=order_no, item_no=key[1], material_no=material,
-                                             tons=ordered, shipped_tons=delivered, due_date=due, status=status))
+                                             tons=ordered, shipped_tons=delivered, due_date=due, status=status,
+                                             ship_to=ship_to or None))
     return parsed
 
 

@@ -17,7 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from planning_data import engine_forecast
+from planning_data import engine_forecast, sale_forecast
 from planning_data.sql import StoreUnavailable, WriteRejected
 
 log = logging.getLogger("ibp.api.forecast")
@@ -29,7 +29,7 @@ forecast_engine: Optional[dict] = None
 # Background training state: idle | training | failed (engine None + failed = why)
 _training = {"state": "idle", "started_at": None, "error": None}
 # Bump after any change to the training pipeline so old caches are dropped
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 
 
 def _cache_path() -> Path:
@@ -363,3 +363,35 @@ def handle_publish_engine_forecast(dry_run: bool = False):
     except StoreUnavailable:
         log.exception("[Database] Planning data: engine forecast NOT published")
         raise HTTPException(status_code=503, detail="Database unavailable: engine forecast NOT published")
+
+
+@router.post("/api/v1/forecasts/from-sale-forecast")
+def handle_publish_sale_forecast(dry_run: bool = False):
+    """Write the client's Sale forecast (Product Status workbook, 'Sale
+    forecast' sheet) as Source='manual' rows per product group and month:
+    the planner's own demand, which overrides the engine's statistical
+    forecast - including BR150LGN, whose history is too short for an engine
+    model. Segments of grades that are no plant group are skipped and
+    listed. dry_run=true counts the rows without keeping them.
+    """
+    try:
+        return sale_forecast.publish(dry_run=dry_run)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except WriteRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except StoreUnavailable:
+        log.exception("[Database] Planning data: sale forecast NOT published")
+        raise HTTPException(status_code=503, detail="Database unavailable: sale forecast NOT published")
+
+
+@router.delete("/api/v1/forecasts/sale-forecast")
+def handle_clear_sale_forecast(dry_run: bool = False):
+    """Delete the manual rows the Sale forecast import wrote, so the
+    engine's statistical forecast takes over again. dry_run=true only
+    counts them."""
+    try:
+        return sale_forecast.clear(dry_run=dry_run)
+    except StoreUnavailable:
+        log.exception("[Database] Planning data: sale forecast rows NOT cleared")
+        raise HTTPException(status_code=503, detail="Database unavailable: sale forecast rows NOT cleared")

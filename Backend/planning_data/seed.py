@@ -1,27 +1,35 @@
 """Load the product master into dbo.Products.
 
     cd Backend
-    python -m planning_data.seed --source billing --dry-run
-    python -m planning_data.seed --source billing [--since 2025-01-01]
+    python -m planning_data.seed --source codespec --dry-run
+    python -m planning_data.seed --source codespec
     python -m planning_data.seed --source mock
 
-    # inside Docker (DATABASE_URL and the billing data are already there)
-    docker compose exec backend python -m planning_data.seed --source billing
+    # inside Docker (DATABASE_URL and the file are already there)
+    docker compose exec backend python -m planning_data.seed --source codespec
 
---source billing: every material with net billed tons > 0 since --since
-(default: 24 months back) in the client's billing extract (DemandModel/,
-never in git), with its most frequent description and grade. The grade
-"UBEPOL BR150" becomes group BR150; grades that are not a group of
-plant_config.yaml are skipped and listed.
+A product is a material-market code ('400003-ST'): the identity the
+factory's own data speaks everywhere (ZSDR orders, the stock report's
+batches, the Sale forecast segments). --source codespec builds the master
+from the project's curated catalog DemandModel/product_codespec_effective.csv
+(never in git): one row per product with its Sale forecast name, its plant
+group and the company's confirmations (record_decision = 'use' rows only).
+A combined spec ('400003-ST,WS') becomes one product per market. Active
+4-xxx products that the catalog does not list are deactivated, so the
+master follows the file; mock 99xxx products are untouched.
+--source billing: plain SAP materials billed since --since (24 months);
+kept for reference, not the recommended master.
 --source mock: the fictitious products of sample_data/mock/products.csv.
 
-Only missing materials are added. An existing product, including the
-minimum stock a planner set on it, is never overwritten. New products from
-billing start with MinStockTons = 0. Needs DATABASE_URL (or MSSQL_*) like
-the backend; --dry-run only prints what would be added.
+Only missing products are added. An existing product, including the
+minimum stock a planner set on it, is never overwritten. New products
+start with MinStockTons = 0. Needs DATABASE_URL (or MSSQL_*) like the
+backend; --dry-run only prints what would be done.
 """
 
 import argparse
+import csv
+import re
 import sys
 from collections import Counter
 from datetime import date
@@ -31,12 +39,16 @@ from planning_data.engine_forecast import group_of_grade
 from planning_data.products import (
     ProductCreate,
     ProductExists,
+    ProductUpdate,
     SqlProductStore,
     StoreUnavailable,
     load_mock_products,
 )
 
 EDITOR = "seed script"
+_BARE_MATERIAL = re.compile(r"4\d{5}$")
+_PRODUCT_LIKE = re.compile(r"^4\d{5}(-[A-Z0-9,]+)?$")
+CATALOG_FILE = "product_codespec_effective.csv"
 
 
 def _most_common(values, fallback: str) -> str:
@@ -85,6 +97,68 @@ def mock_products() -> List[ProductCreate]:
     ) for p in load_mock_products()]
 
 
+def codespec_products(path, groups: List[str]) -> Tuple[List[ProductCreate], Counter]:
+    """The market-level products of the curated catalog CSV.
+
+    One row per product: code_spec is the material-market code, product_raw
+    the Sale forecast name, effective_product_group the plant group, and
+    record_decision the company's call ('use' rows only). A combined spec
+    ('400003-ST,WS') is ONE product and its individual SAP codes fold into
+    it (planning_data.market_aliases); a single-spec row whose code is
+    already covered by a combined product is the duplicate and is dropped.
+    """
+    from forecasting.data import DATA_DIR
+    from planning_data.market_aliases import combined_key
+
+    if path is None:
+        path = DATA_DIR / CATALOG_FILE
+    path = str(path)
+
+    def rows():
+        with open(path, encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                if (row.get("record_decision") or "").strip() != "use":
+                    continue
+                yield row
+
+    products: dict = {}               # code -> (name, group)
+    order: List[str] = []
+    skipped = Counter()
+    for row in rows():
+        spec = re.sub(r"\s+", "", (row.get("code_spec") or "").strip().upper())
+        name = re.sub(r"\s+", " ", (row.get("product_raw") or "").strip())
+        group = (row.get("effective_product_group") or "").strip()
+        if not spec or not name or not group:
+            skipped["(incomplete row)"] += 1
+            continue
+        if group not in set(groups):
+            skipped[group] += 1
+            continue
+        if "," in spec and spec not in products:
+            products[spec] = (name, group)
+            order.append(spec)
+    covered = set()
+    for spec in products:
+        base, tail = spec.split("-", 1)
+        covered.update("%s-%s" % (base, m) for m in tail.split(",") if m)
+    for row in rows():
+        spec = re.sub(r"\s+", "", (row.get("code_spec") or "").strip().upper())
+        name = re.sub(r"\s+", " ", (row.get("product_raw") or "").strip())
+        group = (row.get("effective_product_group") or "").strip()
+        # pass 1 already counted every group problem, so this pass skips silently
+        if "," in spec or not spec or not name or not group or group not in set(groups):
+            continue
+        if spec in covered or spec in products:
+            continue                  # a duplicate of a combined product: dropped
+        products[spec] = (name, group)
+        order.append(spec)
+    out = [ProductCreate(material_no=combined_key(spec) if "," in spec else spec,
+                         description=products[spec][0][:100], group_code=products[spec][1],
+                         updated_by=EDITOR)
+           for spec in order]
+    return sorted(out, key=lambda p: (p.group_code, p.material_no)), skipped
+
+
 def _months_back(today: date, months: int) -> date:
     index = today.year * 12 + today.month - 1 - months
     return date(index // 12, index % 12 + 1, 1)
@@ -92,27 +166,32 @@ def _months_back(today: date, months: int) -> date:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="Add missing products to dbo.Products.")
-    parser.add_argument("--source", choices=["billing", "mock"], required=True)
+    parser.add_argument("--source", choices=["codespec", "billing", "mock"], required=True)
     parser.add_argument("--since", type=date.fromisoformat, default=None,
                         help="billing only: first billing date to include (default: 24 months back)")
-    parser.add_argument("--dry-run", action="store_true", help="print what would be added, write nothing")
+    parser.add_argument("--dry-run", action="store_true", help="print what would be done, write nothing")
     args = parser.parse_args(argv)
 
     import database
     from optimization.engine import plant_groups
 
     groups = [g["id"] for g in plant_groups()]
-    if args.source == "billing":
+    skipped = Counter()
+    if args.source == "mock":
+        candidates = mock_products()
+        print("sample_data/mock/products.csv: %d products" % len(candidates))
+    elif args.source == "codespec":
+        candidates, skipped = codespec_products(None, groups)
+        print("product_codespec_effective.csv: %d market product(s)" % len(candidates))
+    else:
         from forecasting.data import load_billing_frame
 
         since = args.since or _months_back(date.today(), 24)
         candidates, skipped = billing_products(load_billing_frame(), groups, since)
-        print("Billing extract since %s: %d products in plant groups" % (since, len(candidates)))
-        for grade, count in sorted(skipped.items()):
-            print("  skipped %d material(s) of grade %s (not a group in plant_config.yaml)" % (count, grade))
-    else:
-        candidates = mock_products()
-        print("sample_data/mock/products.csv: %d products" % len(candidates))
+        print("Billing extract since %s: %d products in plant groups (legacy material-level source)"
+              % (since, len(candidates)))
+    for grade, count in sorted(skipped.items()):
+        print("  skipped %d product(s): %s" % (count, grade))
 
     per_group = Counter(p.group_code for p in candidates)
     print("  per group: " + ", ".join("%s %d" % (g, per_group[g]) for g in groups))
@@ -139,6 +218,22 @@ def main(argv=None) -> int:
         print("Database error after adding %d product(s): %s" % (added, exc), file=sys.stderr)
         return 2
     print("Added %d product(s); %d already present and left unchanged." % (added, kept))
+    if args.source == "codespec":
+        catalog = {p.material_no for p in candidates}
+        retired = 0
+        try:
+            for existing in store.list():
+                # an active 4-xxx product the catalog does not list is out of
+                # the company's catalog: deactivate it (mock 99xxx untouched)
+                if existing.is_active and _PRODUCT_LIKE.fullmatch(existing.material_no) \
+                        and existing.material_no not in catalog:
+                    store.update(existing.material_no, ProductUpdate(is_active=False, updated_by=EDITOR))
+                    retired += 1
+        except StoreUnavailable as exc:
+            print("Database error while deactivating retired products: %s" % exc, file=sys.stderr)
+            return 2
+        if retired:
+            print("Deactivated %d product(s) the catalog does not list." % retired)
     return 0
 
 

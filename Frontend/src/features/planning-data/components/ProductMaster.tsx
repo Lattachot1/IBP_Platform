@@ -1,10 +1,10 @@
 import { Fragment, useState } from 'react';
-import { ChevronDown, ChevronRight, Package, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { ChevronDown, ChevronRight, FileSpreadsheet, Package, Plus, RefreshCw, Sparkles } from 'lucide-react';
 
 import { describeFailure } from '@/lib/apiClient';
 import { formatNumber } from '@/lib/format';
 
-import { publishEngineForecast } from '../api';
+import { publishEngineForecast, publishSaleForecast } from '../api';
 import type { Product, ProductGroup } from '../types';
 import type { PlanningViewsState, ProductMasterState } from '../usePlanningData';
 
@@ -159,11 +159,12 @@ function DetailRow({ p, master, views }: { p: Product; master: ProductMasterStat
             ))}
           </MiniTable>
           <MiniTable caption="Sales orders" empty="No sales orders for this product" head={
-            <tr><th className={th}>Order / item</th><th className={`${th} text-right`}>Ordered (t)</th><th className={`${th} text-right`}>Open (t)</th><th className={th}>Due</th><th className={th}>Status</th></tr>
+            <tr><th className={th}>Order / item</th><th className={th}>Ship to</th><th className={`${th} text-right`}>Ordered (t)</th><th className={`${th} text-right`}>Open (t)</th><th className={th}>Due</th><th className={th}>Status</th></tr>
           }>
             {orders.map((o) => (
               <tr key={`${o.order_no}/${o.item_no}`}>
                 <td className={`${td} font-mono`}>{o.order_no}/{o.item_no}</td>
+                <td className={`${td} font-mono`}>{o.ship_to ?? '—'}</td>
                 <td className={`${td} text-right font-mono`}>{formatNumber(o.tons)}</td>
                 <td className={`${td} text-right font-mono font-semibold`}>{formatNumber(o.open_tons)}</td>
                 <td className={td}>{o.due_date}</td>
@@ -204,6 +205,8 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
   const [expanded, setExpanded] = useState<string | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [engineNote, setEngineNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [salePublishing, setSalePublishing] = useState(false);
+  const [saleNote, setSaleNote] = useState<{ ok: boolean; text: string } | null>(null);
 
   // Writes the forecast engine's monthly group forecast as engine rows
   const updateFromEngine = async () => {
@@ -220,6 +223,25 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
       setEngineNote({ ok: false, text: describeFailure(err) });
     } finally {
       setPublishing(false);
+    }
+  };
+
+  // Imports the client's Sale forecast (Product Status workbook) as manual
+  // group forecasts - manual rows override the engine's numbers in planning
+  const updateFromSaleForecast = async () => {
+    setSalePublishing(true);
+    try {
+      const r = await publishSaleForecast();
+      setSaleNote({
+        ok: true,
+        text: `${r.rows} manual rows for ${r.groups.join(', ')} (${r.first_month} to ${r.last_month}) · ${r.inserted} new, ${r.updated} updated`
+          + (r.skipped_segments.length ? ` · not a plant group: ${r.skipped_segments.join(', ')}` : ''),
+      });
+      await views.refresh();
+    } catch (err) {
+      setSaleNote({ ok: false, text: describeFailure(err) });
+    } finally {
+      setSalePublishing(false);
     }
   };
 
@@ -305,6 +327,12 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
             <Sparkles className={`w-3.5 h-3.5 ${publishing ? 'animate-pulse' : ''}`} />
             {publishing ? 'Updating…' : 'Update from forecast engine'}
           </button>
+          <button className={`${button} bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 inline-flex items-center gap-1`}
+            onClick={() => void updateFromSaleForecast()} disabled={salePublishing}
+            title="Import the client's Sale forecast (Product Status workbook) as manual group forecasts - the planner's own demand, overriding the engine's forecast">
+            <FileSpreadsheet className={`w-3.5 h-3.5 ${salePublishing ? 'animate-pulse' : ''}`} />
+            {salePublishing ? 'Importing…' : 'Update from Sale forecast'}
+          </button>
           <button className={`${button} bg-slate-100 border-slate-300 text-slate-700 hover:bg-slate-200 inline-flex items-center gap-1`}
             onClick={() => void master.refresh()} disabled={master.loading}>
             <RefreshCw className={`w-3.5 h-3.5 ${master.loading ? 'animate-spin' : ''}`} /> Refresh
@@ -319,6 +347,11 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
       {engineNote && (
         <p role={engineNote.ok ? 'status' : 'alert'} className={`px-6 py-2 text-xs border-b border-slate-200 ${engineNote.ok ? 'text-emerald-700 bg-emerald-50/50' : 'text-rose-600 bg-rose-50/50'}`}>
           {engineNote.ok ? engineNote.text : `Could not update from the forecast engine: ${engineNote.text}`}
+        </p>
+      )}
+      {saleNote && (
+        <p role={saleNote.ok ? 'status' : 'alert'} className={`px-6 py-2 text-xs border-b border-slate-200 ${saleNote.ok ? 'text-emerald-700 bg-emerald-50/50' : 'text-rose-600 bg-rose-50/50'}`}>
+          {saleNote.ok ? saleNote.text : `Could not update from the Sale forecast: ${saleNote.text}`}
         </p>
       )}
       {views.error && (

@@ -9,7 +9,9 @@ evaluator flag it. Slow (minutes): the solver may run to its time limit.
 
 import pytest
 
-from optimization import selftest
+from optimization import manual, selftest
+from optimization.engine import solve
+from optimization.schemas import EvaluateRequest, OptimizeRequest
 
 
 @pytest.fixture(scope="module")
@@ -38,3 +40,19 @@ def test_plan_reacts_to_demand(solved):
     heavy_vcr = solved["S2 heavy VCR-412 demand"][0]
     assert mains(default) and mains(heavy_vcr)
     assert mains(default) != mains(heavy_vcr)
+
+
+def test_last_day_counts_towards_the_reactor_age_limit():
+    # The age recursion used to stop one day short of the horizon, so a plan
+    # could push a pair past its 60-day limit on its final day and the
+    # hand-edit evaluator then flagged what the solver had allowed (a flaky
+    # conflict, depending on which optimum the solver happened to pick).
+    req = OptimizeRequest(horizon_days=14, time_limit_s=20)
+    res = solve(req.model_dump())
+    assert res["status"] == "feasible", res.get("message")
+    draft = manual.draft_from_result(res)
+    ev = manual.evaluate(EvaluateRequest(**req.model_dump(), **draft).model_dump())
+    assert ev["conflicts"] == 0
+    # max age now includes the last day's production (day start + true end)
+    max_age = next(c["text"] for c in res["checks"] if "RX1-2 max age in plan" in c["text"])
+    assert "≤ 60" in max_age and "61" not in max_age

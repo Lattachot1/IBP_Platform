@@ -17,6 +17,7 @@ import type {
   ProductGroup,
   QcLot,
   SalesOrder,
+  SaleForecastReport,
   StockAdjustment,
   StockSnapshot,
 } from './types';
@@ -87,3 +88,7 @@ export const getForecasts = () => getJson<Forecast[]>('/api/v1/forecasts');
 /** Write the forecast engine's monthly forecast per group as 'engine' rows. */
 export const publishEngineForecast = () =>
   postJson<EngineForecastReport>('/api/v1/forecasts/from-engine', {});
+
+/** Import the client's Sale forecast as 'manual' rows (they override the engine). */
+export const publishSaleForecast = () =>
+  postJson<SaleForecastReport>('/api/v1/forecasts/from-sale-forecast', {});

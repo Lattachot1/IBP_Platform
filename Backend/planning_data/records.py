@@ -58,6 +58,7 @@ class SalesOrder(BaseModel):
     shipped_tons: float
     due_date: date
     status: str
+    ship_to: Optional[str] = None    # the ship-to partner code, never a customer name
     updated_at: Optional[datetime] = None
 
     @computed_field

@@ -74,6 +74,31 @@ def test_qc_lots_import_maps_usage_decisions():
     assert in_qc and all(lot["release_date"] > "2026-11-06" for lot in in_qc)
 
 
+def test_qc_lot_batch_maps_to_the_market_product():
+    known = {p.material_no: p for p in products.load_mock_products()}
+    known["400003-HM"] = known["990101"]
+    parsed = imports.parse_qc_lots(
+        ("Inspection Lot,Material Number,Lot Qty,SU,Production Date,Release Date,Usage Decision,Batch Number\n"
+         "900001,400003,5,TO,2026/11/10,2026/11/15,,908301HM\n"
+         "900002,990101,6,TO,2026/11/10,2026/11/15,,908301HM\n").encode("utf-8"), known)
+    assert parsed.errors == []
+    assert [r.material_no for r in parsed.records] == ["400003-HM", "990101"]
+
+
+def test_order_combined_spec_and_its_sap_codes_fold_together(monkeypatch):
+    known = {p.material_no: p for p in products.load_mock_products()}
+    known["400003-ST,WS"] = known["990101"]
+    monkeypatch.setattr(imports, "codespec_aliases", lambda: {"400003-ST": "400003-ST,WS",
+                                                              "400003-WS": "400003-ST,WS"})
+    header = "Sales Order Number,Sales Order Item,Material Number,Order Qty,Req. Delivery Date\n"
+    parsed = imports.parse_sales_orders(
+        (header + '3000001,10,"400003-ST,WS",20,2026/11/12\n'   # SAP ships the combined code itself
+                  "3000001,11,400003-WS,10,2026/11/12\n"        # or one of the individual codes
+                  "3000001,12,400003-ST,30,2026/11/12\n").encode("utf-8"), known)
+    assert parsed.errors == []
+    assert [r.material_no for r in parsed.records] == ["400003-ST,WS", "400003-ST,WS", "400003-ST,WS"]
+
+
 def test_sales_orders_import_and_open_tons():
     res = post("sales-orders", mock("sap_sales_orders.csv"))
     assert res.status_code == 200
@@ -83,6 +108,22 @@ def test_sales_orders_import_and_open_tons():
         ("990201", 60, 20, 40)]
     closed = client.get("/api/v1/sales-orders?status=closed").json()
     assert closed and all(o["open_tons"] == 0 for o in closed)
+
+
+SHIP_TO_HEADER = ("Sales Order Number,Sales Order Item,Material Number,Order Qty,Req. Delivery Date,"
+                  "Ship-to Code\n")
+
+
+def test_sales_order_ship_to_code_is_stored_and_updated():
+    post("sales-orders", SHIP_TO_HEADER + "2002054468,10,990101,20,2026/11/12,50629\n")
+    post("sales-orders", SHIP_TO_HEADER + "2002054469,10,990101,10,2026/11/12,\n")
+    rows = client.get("/api/v1/sales-orders").json()
+    ship_to = {r["order_no"]: r["ship_to"] for r in rows}
+    assert ship_to["2002054468"] == "50629" and ship_to["2002054469"] is None
+    # a re-import may update the ship-to code (an order rerouted in SAP)
+    post("sales-orders", SHIP_TO_HEADER + "2002054468,10,990101,20,2026/11/12,50630\n")
+    rows = client.get("/api/v1/sales-orders").json()
+    assert {r["order_no"]: r["ship_to"] for r in rows}["2002054468"] == "50630"
 
 
 def test_reimport_updates_instead_of_duplicating():

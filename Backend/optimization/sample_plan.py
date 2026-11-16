@@ -17,19 +17,22 @@ Story of this plan (Oct 5 - Nov 1, 2026):
     weekday (holiday rule); RX3-4 then go into their 7-day cleaning.
 """
 
-# Categorical slots 1-6, fixed order (never cycled). Slot numbers map to
-# the page's --s1..--s6 color tokens.
+# Categorical slots 1-7, fixed order (never cycled). Slot numbers map to
+# the page's --s1..--s7 color tokens.
 GRADES = {
-    "BR150":  {"slot": 1, "disp": "BR150"},
-    "BR150B": {"slot": 2, "disp": "BR150B"},
-    "BR360B": {"slot": 3, "disp": "BR360B"},
-    "VCR412": {"slot": 4, "disp": "VCR-412"},
-    "VCR617": {"slot": 5, "disp": "VCR-617"},
-    "BR150L": {"slot": 6, "disp": "BR150L"},
+    "BR150":    {"slot": 1, "disp": "BR150"},
+    "BR150B":   {"slot": 2, "disp": "BR150B"},
+    "BR360B":   {"slot": 3, "disp": "BR360B"},
+    "VCR412":   {"slot": 4, "disp": "VCR-412"},
+    "VCR617":   {"slot": 5, "disp": "VCR-617"},
+    "BR150L":   {"slot": 6, "disp": "BR150L"},
+    "BR150LGN": {"slot": 7, "disp": "BR150LGN"},
 }
-GRADE_ORDER = ["BR150", "BR150B", "BR360B", "VCR412", "VCR617", "BR150L"]
+GRADE_ORDER = ["BR150", "BR150B", "BR360B", "VCR412", "VCR617", "BR150L", "BR150LGN"]
 
 # Demand defaults in tons per 28-day window (demo values, not real orders).
+# BR150LGN stays at 0: the sample-plan story predates the group and the
+# client has sent no figures for it yet.
 DEMAND_DEFAULT = {
     "BR150": 2600.0,
     "BR150L": 900.0,
@@ -37,6 +40,7 @@ DEMAND_DEFAULT = {
     "BR360B": 400.0,
     "VCR412": 500.0,
     "VCR617": 1000.0,
+    "BR150LGN": 0.0,
 }
 
 # One entry per plan day. cap = changeover-day ceiling (None on normal days).

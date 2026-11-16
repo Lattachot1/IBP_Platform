@@ -39,11 +39,12 @@ PILOT_GRADES = [
     "UBEPOL BR150L",
     "UBEPOL VCR617",
     "UBEPOL VCR412",
-    "UBEPOL BR150B",   # sparse: 22 active months / 55 - intermittent methods
-    "UBEPOL BR360B",   # sparse: 21 active months / 61 - intermittent methods
+    "UBEPOL BR150B",    # sparse: 22 active months / 55 - intermittent methods
+    "UBEPOL BR360B",    # sparse: 21 active months / 61 - intermittent methods
+    "UBEPOL BR150LGN",  # sparse: occasional campaigns, few materials
 ]
 # Grades produced as occasional campaigns -> intermittent-demand models
-SPARSE_GRADES = {"UBEPOL BR150B", "UBEPOL BR360B"}
+SPARSE_GRADES = {"UBEPOL BR150B", "UBEPOL BR360B", "UBEPOL BR150LGN"}
 
 
 def find_source_file(path=None) -> Path:

@@ -184,8 +184,10 @@ def test_output_is_split_over_products_and_orders_are_served(monkeypatch):
 
 
 def test_orders_come_before_the_forecast(monkeypatch):
-    # Days 0-1 must stay BR150 (initial state); 460 t is all they can make.
-    # Order 1 needs it all to ship on 16 Nov; B's forecast wants it too.
+    # Days 0-1 must stay BR150 (initial state). Order 1 needs 460 t ready by
+    # 16 Nov (day 7 = qc_days after day 2), so days 0-2 of production must
+    # cover it - even where the forecast tier takes a few tons for B too,
+    # which may shave a day's BR150 output without making the order late.
     forecasts = [Forecast(group_code="BR150", forecast_month=date(2026, 11, 1), source="engine", tons=5000)]
     orders = [order("1", "A", 460, date(2026, 11, 16)), order("0", "B", 1, date(2026, 11, 30))]
     inputs = build([product("A"), product("B")], snapshot(START, A=0, B=1), orders=orders,
@@ -193,7 +195,7 @@ def test_orders_come_before_the_forecast(monkeypatch):
     res = solve_with(monkeypatch, inputs, horizon_days=14)
     assert _orders(res)["1"]["status"] == "on_time"
     a = next(p for p in res["planning"]["products"] if p["material_no"] == "A")
-    assert sum(a["produced"][:2]) >= 459
+    assert sum(a["produced"][:3]) >= 460
 
 
 def test_unavoidable_lateness_is_reported(monkeypatch):

@@ -92,6 +92,8 @@ export interface SalesOrder {
   open_tons: number;
   due_date: string;
   status: 'open' | 'closed' | 'cancelled';
+  /** the ship-to partner code, never a customer name */
+  ship_to: string | null;
 }
 
 /** POST /api/v1/forecasts/from-engine */
@@ -102,6 +104,19 @@ export interface EngineForecastReport {
   first_month: string | null;
   last_month: string | null;
   skipped_grades: string[];
+  inserted: number;
+  updated: number;
+}
+
+/** POST /api/v1/forecasts/from-sale-forecast (the Product Status workbook) */
+export interface SaleForecastReport {
+  status: 'published' | 'checked';
+  rows: number;
+  groups: string[];
+  first_month: string | null;
+  last_month: string | null;
+  months_in_file: number;
+  skipped_segments: string[];
   inserted: number;
   updated: number;
 }
