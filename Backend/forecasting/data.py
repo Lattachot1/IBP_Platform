@@ -51,25 +51,31 @@ def find_source_file(path=None) -> Path:
     """Locate the billing extract.
 
     Priority: explicit path > DEMAND_DATA_PATH env > the first CSV in
-    DemandModel/ that is not an external download (fred_*.csv). The name
-    filter matters on Windows, where Path sorting is case-insensitive and
-    'fred_brent.csv' would otherwise sort before 'Sale Billing...'.
+    DemandModel/ whose header carries the billing columns. The header sniff
+    matters because DemandModel/ also holds companion CSVs that are not the
+    extract (fred_*.csv downloads, product_codespec_effective.csv), and on
+    Windows the case-insensitive sort puts some of them before
+    'Sale Billing...'.
     """
     if path:
         return Path(path)
     env = os.getenv("DEMAND_DATA_PATH", "").strip()
     if env:
         return Path(env)
-    candidates = sorted(
-        p for p in DATA_DIR.glob("*.csv")
-        if not p.name.lower().startswith("fred_")
+    for candidate in sorted(DATA_DIR.glob("*.csv")):
+        try:
+            with candidate.open("r", encoding="latin-1", errors="replace", newline="") as fh:
+                head = "".join(next(fh, "") for _ in range(3))
+        except OSError:
+            continue
+        # "Billing Date" is ASCII, so the sniff works for the cp874 extract
+        # and any utf-8 companion file alike
+        if DATE_COL in head:
+            return candidate
+    raise FileNotFoundError(
+        f"No billing CSV found in {DATA_DIR}. Put the extract there or "
+        "set DEMAND_DATA_PATH."
     )
-    if not candidates:
-        raise FileNotFoundError(
-            f"No billing CSV found in {DATA_DIR}. Put the extract there or "
-            "set DEMAND_DATA_PATH."
-        )
-    return candidates[0]
 
 
 def load_billing_frame(path=None) -> pd.DataFrame:

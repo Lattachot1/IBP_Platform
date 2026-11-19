@@ -207,8 +207,10 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
             <div className="opt-glabel" />
             {view.days.map((d, i) => {
               const parts = d.date.split(' ');
+              const mstart = d.iso.endsWith('-01');
               return (
-                <div key={d.iso} className={'opt-d' + (d.wknd ? ' wknd' : '') + (conflictDays.has(i) ? ' conf' : '')}>
+                <div key={d.iso} className={'opt-d' + (d.wknd ? ' wknd' : '') + (conflictDays.has(i) ? ' conf' : '') + (mstart ? ' mstart' : '')}>
+                  {mstart && <span className="opt-mlab">{`${d.iso.slice(5, 7)}/${d.iso.slice(0, 4)}`}</span>}
                   <b>{parts[0]}</b>
                   {parts.slice(1).join(' ')} · {d.wd}
                 </div>
@@ -286,7 +288,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
             {view.days.map((d, i) => (
               <div
                 key={'plant-' + d.iso}
-                className={'opt-gcell' + (d.wknd ? ' wknd' : '') + (conflictDays.has(i) ? ' conf' : '')}
+                className={'opt-gcell' + (d.wknd ? ' wknd' : '') + (conflictDays.has(i) ? ' conf' : '') + (d.iso.endsWith('-01') ? ' mstart' : '')}
                 onMouseMove={(e) => showTip(e, d)}
                 onMouseLeave={() => setTip(null)}
               >
@@ -313,7 +315,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
                   return (
                     <div
                       key={d.iso}
-                      className={'opt-gcell' + (d.wknd ? ' wknd' : '') + (conflictDays.has(i) ? ' conf' : '') + (draggable ? ' grab' : '')}
+                      className={'opt-gcell' + (d.wknd ? ' wknd' : '') + (conflictDays.has(i) ? ' conf' : '') + (draggable ? ' grab' : '') + (d.iso.endsWith('-01') ? ' mstart' : '')}
                       onMouseMove={(e) => showTip(e, d, { id: rid, status })}
                       onMouseLeave={() => setTip(null)}
                       onPointerDown={draggable ? (e) => onCleanDown(e, pair, i) : undefined}

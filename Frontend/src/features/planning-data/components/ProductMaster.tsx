@@ -1,10 +1,12 @@
-import { Fragment, useState } from 'react';
-import { ChevronDown, ChevronRight, FileSpreadsheet, Package, Plus, RefreshCw, Sparkles } from 'lucide-react';
+import { Fragment, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, ChevronUp, FileSpreadsheet, Package, Plus, RefreshCw, Search, Sparkles } from 'lucide-react';
 
 import { describeFailure } from '@/lib/apiClient';
 import { formatNumber } from '@/lib/format';
 
 import { publishEngineForecast, publishSaleForecast } from '../api';
+import { applyFilterSort, figuresOf, nextSort } from '../productTable';
+import type { ProductSort, ProductSortColumn } from '../productTable';
 import type { Product, ProductGroup } from '../types';
 import type { PlanningViewsState, ProductMasterState } from '../usePlanningData';
 
@@ -102,18 +104,6 @@ function Status({ value }: { value: string }) {
   return <span className={`px-2 py-0.5 rounded-full text-[11px] font-semibold ${STATUS_STYLE[value] ?? ''}`}>{value.replace('_', ' ')}</span>;
 }
 
-/** The planning inputs of one product, summed from the imported data. */
-function figuresOf(p: Product, views: PlanningViewsState) {
-  const base = views.stock?.rows.find((r) => r.material_no === p.material_no)?.on_hand_tons ?? null;
-  const adjust = views.stock?.adjustments.find((a) => a.material_no === p.material_no)?.adjust_tons ?? null;
-  const onHand = adjust ?? base;   // what the plan actually starts from
-  const inQcTons = views.lots.filter((l) => l.material_no === p.material_no && l.status === 'in_qc').reduce((s, l) => s + l.tons, 0);
-  const open = views.orders.filter((o) => o.material_no === p.material_no && o.status === 'open');
-  const openTons = open.reduce((s, o) => s + o.open_tons, 0);
-  const nextDue = open.length ? open.map((o) => o.due_date).sort()[0] : null;
-  return { base, adjust, onHand, inQcTons, openTons, nextDue };
-}
-
 /** A small table inside an expanded row; scrollable so long lists stay compact. */
 function MiniTable({ caption, head, children, empty }: {
   caption: string; head: React.ReactNode; children: React.ReactNode[]; empty: string;
@@ -135,11 +125,15 @@ function MiniTable({ caption, head, children, empty }: {
   );
 }
 
-/** The expanded row: this product's QC lots, sales orders and its group's forecast. */
+/** The expanded row: this product's QC lots, sales orders and its group's forecast,
+ * each in the order the planner reads them (earliest need first). */
 function DetailRow({ p, master, views }: { p: Product; master: ProductMasterState; views: PlanningViewsState }) {
-  const lots = views.lots.filter((l) => l.material_no === p.material_no);
-  const orders = views.orders.filter((o) => o.material_no === p.material_no);
-  const forecasts = views.forecasts.filter((f) => f.group_code === p.group_code);
+  const lots = [...views.lots.filter((l) => l.material_no === p.material_no)]
+    .sort((a, b) => a.release_date.localeCompare(b.release_date) || a.lot_no.localeCompare(b.lot_no));
+  const orders = [...views.orders.filter((o) => o.material_no === p.material_no)]
+    .sort((a, b) => a.due_date.localeCompare(b.due_date) || a.order_no.localeCompare(b.order_no) || a.item_no - b.item_no);
+  const forecasts = [...views.forecasts.filter((f) => f.group_code === p.group_code)]
+    .sort((a, b) => a.forecast_month.localeCompare(b.forecast_month) || a.source.localeCompare(b.source));
   const groupDisp = master.groups.find((g) => g.id === p.group_code)?.disp ?? p.group_code;
   return (
     <tr className="bg-slate-50/60">
@@ -193,11 +187,32 @@ function DetailRow({ p, master, views }: { p: Product; master: ProductMasterStat
   );
 }
 
+/** A column header that sorts on click (asc → desc → back to the default
+ * group order); the arrow shows the active direction. */
+function SortableTh({ label, column, sort, onSort, right = false }: {
+  label: string; column: ProductSortColumn; sort: ProductSort | null; onSort: (column: ProductSortColumn) => void; right?: boolean;
+}) {
+  const active = sort?.column === column;
+  return (
+    <th className={`py-3 px-4 ${right ? 'text-right' : ''}`} aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}>
+      <button type="button"
+        className={`inline-flex items-center gap-0.5 uppercase tracking-wider text-[11px] font-semibold ${active ? 'text-sky-700' : 'hover:text-slate-700'}`}
+        onClick={() => onSort(column)}>
+        {label}
+        {active && (sort!.dir === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />)}
+      </button>
+    </th>
+  );
+}
+
 // Product master: every SAP material with its group, minimum stock and the
 // planning inputs (stock, QC lots, open orders) that the plan is built from.
 export function ProductMaster({ master, views }: { master: ProductMasterState; views: PlanningViewsState }) {
   const [groupFilter, setGroupFilter] = useState('');
   const [showInactive, setShowInactive] = useState(true);
+  const [query, setQuery] = useState('');
+  const [belowMinOnly, setBelowMinOnly] = useState(false);
+  const [sort, setSort] = useState<ProductSort | null>(null);
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -246,8 +261,11 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
   };
 
   const groupName = (id: string) => master.groups.find((g) => g.id === id)?.disp ?? id;
-  const shown = master.products.filter(
-    (p) => (!groupFilter || p.group_code === groupFilter) && (showInactive || p.is_active),
+  const shown = useMemo(
+    () => applyFilterSort(master.products, views, {
+      query, groupCode: groupFilter, showInactive, belowMinOnly, sort,
+    }),
+    [master.products, views, query, groupFilter, showInactive, belowMinOnly, sort],
   );
   const activeCount = master.products.filter((p) => p.is_active).length;
   const adjustmentCount = views.stock?.adjustments.length ?? 0;
@@ -293,6 +311,8 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
     setRowError(failure ? { material: p.material_no, text: failure } : null);
   };
 
+  const sortOn = (column: ProductSortColumn) => setSort((current) => nextSort(column, current));
+
   return (
     <section className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
       <div className="p-6 border-b border-slate-200 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -312,6 +332,11 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="relative">
+            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <input type="search" aria-label="Search material or description" placeholder="Search material or description…"
+              className={`${input} w-56 pl-7`} value={query} onChange={(e) => setQuery(e.target.value)} />
+          </span>
           <select aria-label="Filter by group" className={input} value={groupFilter} onChange={(e) => setGroupFilter(e.target.value)}>
             <option value="">All groups</option>
             {master.groups.map((g) => (
@@ -322,6 +347,11 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
             <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} />
             Show inactive
           </label>
+          <label className="flex items-center gap-1.5 text-slate-600" title="Only products whose effective stock (adjustment wins) sits below their minimum">
+            <input type="checkbox" checked={belowMinOnly} onChange={(e) => setBelowMinOnly(e.target.checked)} />
+            Below minimum only
+          </label>
+          <span className="text-slate-400">{shown.length} of {master.products.length} shown</span>
           <button className={`${button} bg-blue-50 border-blue-200 text-blue-700 hover:bg-blue-100 inline-flex items-center gap-1`}
             onClick={() => void updateFromEngine()} disabled={publishing} title="Publish the forecast engine's monthly group forecast as engine rows (manual rows keep overriding them)">
             <Sparkles className={`w-3.5 h-3.5 ${publishing ? 'animate-pulse' : ''}`} />
@@ -364,18 +394,18 @@ export function ProductMaster({ master, views }: { master: ProductMasterState; v
 
       <div className="overflow-x-auto">
         <table className="w-full text-left text-xs text-slate-700">
-          <thead className="bg-slate-50 text-slate-500 font-semibold border-b border-slate-200 uppercase tracking-wider text-[11px]">
+          <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
             <tr>
               <th className="py-3 px-3"><span className="sr-only">Details</span></th>
-              <th className="py-3 px-4">Material</th>
-              <th className="py-3 px-4">Description</th>
-              <th className="py-3 px-4">Group</th>
-              <th className="py-3 px-4 text-right">Min stock (t)</th>
-              <th className="py-3 px-4 text-right">Stock (t)</th>
-              <th className="py-3 px-4 text-right">Stock adjust (t)</th>
-              <th className="py-3 px-4 text-right">In QC (t)</th>
-              <th className="py-3 px-4 text-right">Open orders (t)</th>
-              <th className="py-3 px-4">Status</th>
+              <SortableTh label="Material" column="material" sort={sort} onSort={sortOn} />
+              <SortableTh label="Description" column="description" sort={sort} onSort={sortOn} />
+              <SortableTh label="Group" column="group" sort={sort} onSort={sortOn} />
+              <SortableTh label="Min stock (t)" column="min_stock" sort={sort} onSort={sortOn} right />
+              <SortableTh label="Stock (t)" column="stock" sort={sort} onSort={sortOn} right />
+              <SortableTh label="Stock adjust (t)" column="adjust" sort={sort} onSort={sortOn} right />
+              <SortableTh label="In QC (t)" column="in_qc" sort={sort} onSort={sortOn} right />
+              <SortableTh label="Open orders (t)" column="open_orders" sort={sort} onSort={sortOn} right />
+              <SortableTh label="Status" column="status" sort={sort} onSort={sortOn} />
               <th className="py-3 px-4 text-right">Action</th>
             </tr>
           </thead>

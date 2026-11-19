@@ -1050,3 +1050,23 @@ table.opt-table td.opt-empty { text-align: center; color: var(--muted); padding:
 .opt-ordertable td.zero { color: var(--muted); }
 .opt-ordertable tr.total td { font-weight: 700; border-top: 1px solid var(--baseline); background: var(--surface2); }
 .opt-ordertable td.opt-ordtot, .opt-ordertable th.opt-ordtot { border-right: none; background: var(--surface2); }
+
+/* Month boundaries: a months-based plan (1..6) shows where each calendar
+   month begins, on the day header and down the whole column. */
+.opt-d.mstart {
+  border-left: 2px solid var(--s1);
+}
+.opt-mlab {
+  display: block;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--s1);
+  background: var(--surface2);
+  border-radius: 4px;
+  margin-bottom: 2px;
+  padding: 0 3px;
+}
+.opt-gcell.mstart {
+  box-shadow: inset 2px 0 0 rgba(42, 120, 214, .35);
+}

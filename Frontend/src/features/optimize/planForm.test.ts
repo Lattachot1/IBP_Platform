@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BASE_FORM, PRESETS, buildRequest, groupDemand, groupUsesProducts, nextMondayIso, scaleDemand } from './planForm';
+import {
+  BASE_FORM, MONTHS_MAX, MONTHS_MIN, PRESETS, buildRequest, groupDemand, groupUsesProducts,
+  monthHorizonDays, monthStartIso, nextMondayIso, scaleDemand,
+} from './planForm';
 import { DEMAND_DEFAULT } from './samplePlan';
 
 afterEach(() => {
@@ -10,16 +13,24 @@ afterEach(() => {
 describe('buildRequest', () => {
   it('maps every form field to the OptimizeRequest body', () => {
     expect(buildRequest({ ...BASE_FORM, startDate: '2026-11-09' })).toEqual({
-      horizon_days: 28,
+      horizon_days: 84,          // Nov 9 through Jan 31 (3 calendar months)
       start_date: '2026-11-09',
       objective: 'maximize_fulfilled',
       demand: { BR150: 2600, BR150B: 1300, BR360B: 400, VCR412: 500, VCR617: 1000, BR150L: 900, BR150LGN: 0 },
       holidays: [],
-      time_limit_s: 30,
+      time_limit_s: 60,
       initial: { grade: 'BR150', remain_days: 2, rx12_age: 54, rx34_age: 0 },
       use_planning_data: false,
       product_demand: {},
     });
+  });
+
+  it('starts on the next Monday when the start date is blank', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-11-05T09:00:00'));
+    const body = buildRequest(BASE_FORM);
+    expect(body.start_date).toBe('2026-11-09');
+    expect(body.horizon_days).toBe(84);
   });
 
   it('turns product rows into the group total and product_demand', () => {
@@ -51,15 +62,22 @@ describe('buildRequest', () => {
   it('clamps to the ranges the backend accepts (no 422 from the page)', () => {
     const body = buildRequest({
       ...BASE_FORM,
-      horizonDays: 500,
+      months: 99,
+      startDate: '2026-11-09',
       timeLimitS: 1,
       remainDays: -3,
       rx12Age: 900,
       rx34Age: Number.NaN,
     });
-    expect(body.horizon_days).toBe(120);
+    expect(body.horizon_days).toBe(monthHorizonDays('2026-11-09', MONTHS_MAX));
     expect(body.time_limit_s).toBe(5);
     expect(body.initial).toEqual({ grade: 'BR150', remain_days: 0, rx12_age: 365, rx34_age: 0 });
+  });
+
+  it('keeps one month when MONTHS_MIN is requested, however short it is', () => {
+    const body = buildRequest({ ...BASE_FORM, months: MONTHS_MIN, startDate: '2026-11-09' });
+    expect(body.horizon_days).toBe(monthHorizonDays('2026-11-09', 1));
+    expect(body.horizon_days).toBeGreaterThanOrEqual(7);
   });
 
   it('drops blank holiday rows and sends 0 for invalid demand', () => {
@@ -77,6 +95,21 @@ describe('buildRequest', () => {
     const a = JSON.stringify(buildRequest({ ...BASE_FORM, demand: { BR150L: 900, ...DEMAND_DEFAULT } }));
     const b = JSON.stringify(buildRequest(BASE_FORM));
     expect(a).toBe(b);
+  });
+});
+
+describe('monthHorizonDays / monthStartIso', () => {
+  it.each([
+    ['mid-month start counts only the days left of the first month', '2026-11-23', 3, 70],   // through 2027-01-31
+    ['a month boundary is exact', '2026-12-01', 2, 62],                                      // Dec + Jan
+    ['leap February is 29 days', '2028-01-05', 2, 56],                                       // through 2028-02-29
+  ])('%s', (_, start, months, expected) => {
+    expect(monthHorizonDays(start, months)).toBe(expected);
+  });
+
+  it('shifts months across the year boundary', () => {
+    expect(monthStartIso('2026-11-23', 3)).toBe('2027-02-01');
+    expect(monthStartIso('2026-11-23', 0)).toBe('2026-11-01');
   });
 });
 
@@ -99,14 +132,14 @@ describe('scaleDemand', () => {
 });
 
 describe('PRESETS', () => {
-  const current = { ...BASE_FORM, startDate: '2026-11-09', holidays: ['2026-12-05'], horizonDays: 14, rx12Age: 10 };
+  const current = { ...BASE_FORM, startDate: '2026-11-09', holidays: ['2026-12-05'], months: 2, rx12Age: 10 };
 
   it('reset the plan inputs but keep the calendar', () => {
     PRESETS.forEach((p) => {
       const next = p.apply(current);
       expect(next.startDate).toBe('2026-11-09');
       expect(next.holidays).toEqual(['2026-12-05']);
-      expect(next.horizonDays).toBe(BASE_FORM.horizonDays);
+      expect(next.months).toBe(BASE_FORM.months);
     });
   });
 

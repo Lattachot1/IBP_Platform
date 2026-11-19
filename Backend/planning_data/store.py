@@ -115,6 +115,11 @@ class MemoryPlanningStore:
                     del self._forecasts[k]
         return len(doomed)
 
+    def delete_forecast(self, group_code: str, month: date) -> int:
+        """Remove the hand-set ('manual') forecast of one group and month."""
+        with self._lock:
+            return 1 if self._forecasts.pop((group_code, month, "manual"), None) is not None else 0
+
     # -- reads ----------------------------------------------------------------
     def stock_snapshot(self, on: Optional[date] = None) -> StockSnapshot:
         with self._lock:
@@ -142,6 +147,22 @@ class MemoryPlanningStore:
         with self._lock:
             rows = [f for f in self._forecasts.values() if _in_range(f.forecast_month, month_from, month_to)]
         return sorted(rows, key=lambda r: (r.group_code, r.forecast_month, r.source))
+
+    def ordered_tons_by_month(self, group_codes: List[str], first_month: date, month_after: date) -> dict:
+        """(group, first-of-month) -> order tons due in that month (any status
+        but cancelled) - the floor a hand-set forecast may not go below."""
+        wanted = set(group_codes)
+        group_of = {p.material_no: p.group_code for p in products.get_store().list()}
+        with self._lock:
+            totals: dict = {}
+            for order in self._orders.values():
+                if order.status == "cancelled" or not (first_month <= order.due_date < month_after):
+                    continue
+                group = group_of.get(order.material_no)
+                if group in wanted:
+                    key = (group, order.due_date.replace(day=1))
+                    totals[key] = totals.get(key, 0.0) + order.tons
+        return totals
 
 
 # ----------------------------------------------------------------------------
@@ -272,6 +293,17 @@ class SqlPlanningStore:
             _finish(conn, dry_run)
         return deleted
 
+    def delete_forecast(self, group_code: str, month: date) -> int:
+        """Remove the hand-set ('manual') forecast of one group and month."""
+        with connection() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM dbo.DemandForecasts "
+                "WHERE GroupCode = %s AND ForecastMonth = %s AND Source = 'manual';",
+                (group_code, month))
+            deleted = max(cursor.rowcount, 0)
+            _finish(conn, False)
+        return deleted
+
     # -- reads ----------------------------------------------------------------
     def stock_snapshot(self, on: Optional[date] = None) -> StockSnapshot:
         with connection() as conn, conn.cursor(as_dict=True) as cursor:
@@ -345,6 +377,24 @@ class SqlPlanningStore:
         return [Forecast(group_code=r["GroupCode"], forecast_month=r["ForecastMonth"], source=r["Source"],
                          tons=float(r["Tons"]), updated_at=utc(r["UpdatedAt"]), updated_by=r["UpdatedBy"])
                 for r in rows]
+
+    def ordered_tons_by_month(self, group_codes: List[str], first_month: date, month_after: date) -> dict:
+        """(group, first-of-month) -> order tons due in that month (any status
+        but cancelled) - the floor a hand-set forecast may not go below."""
+        if not group_codes:
+            return {}
+        placeholders = ", ".join(["%s"] * len(group_codes))
+        sql = ("SELECT p.GroupCode AS GroupCode, "
+               "DATEFROMPARTS(YEAR(o.DueDate), MONTH(o.DueDate), 1) AS MonthStart, "
+               "SUM(o.Tons) AS Tons "
+               "FROM dbo.SalesOrders o JOIN dbo.Products p ON p.MaterialNo = o.MaterialNo "
+               "WHERE o.Status <> 'cancelled' AND o.DueDate >= %s AND o.DueDate < %s "
+               "AND p.GroupCode IN (" + placeholders + ") "
+               "GROUP BY p.GroupCode, YEAR(o.DueDate), MONTH(o.DueDate);")
+        with connection() as conn, conn.cursor(as_dict=True) as cursor:
+            cursor.execute(sql, (first_month, month_after, *group_codes))
+            rows = cursor.fetchall()
+        return {(r["GroupCode"], r["MonthStart"]): float(r["Tons"]) for r in rows}
 
 
 # ----------------------------------------------------------------------------

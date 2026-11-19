@@ -6,7 +6,7 @@ import { formatNumber } from '@/lib/format';
 import { API_BASE_URL, getJson } from '@/lib/apiClient';
 import { DEMAND_DEFAULT, GRADES, SAMPLE_PLAN, dispOf } from './samplePlan';
 import { campaignStarts, cleaningAt, conflictCount, conflictDaysOf, draftFromResult, horizonOf, moveCleaning, resizeCampaign, type Draft, type Pair } from './manualPlan';
-import { HORIZON_MIN, TIME_LIMIT_MAX, OBJECTIVES, BASE_FORM, nextMondayIso, buildRequest, toIso, type PlanForm } from './planForm';
+import { HORIZON_MIN, MONTHS_MIN, TIME_LIMIT_MAX, OBJECTIVES, BASE_FORM, nextMondayIso, buildRequest, toIso, type PlanForm } from './planForm';
 import type { CatalogGroup, OptimizeResult, PlanDay } from './types';
 
 // Gantt geometry (keep in sync with .opt-ghead / .opt-grow in optimize.css).
@@ -418,8 +418,8 @@ export function useOptimizePlan() {
   // Quick fixes offered in the problem banner — each applies and re-solves.
   const fixes: { label: string; next: PlanForm }[] = [];
   if (problem?.status === 'infeasible' || problem?.status === 'unknown') {
-    if (form.horizonDays - 7 >= HORIZON_MIN) {
-      fixes.push({ label: `Horizon −7 days (${form.horizonDays - 7})`, next: { ...form, horizonDays: form.horizonDays - 7 } });
+    if (form.months - 1 >= MONTHS_MIN) {
+      fixes.push({ label: `One month less (${form.months - 1})`, next: { ...form, months: form.months - 1 } });
     }
     if (problem.status === 'unknown' && form.timeLimitS < TIME_LIMIT_MAX) {
       const t = Math.min(TIME_LIMIT_MAX, form.timeLimitS + 30);
