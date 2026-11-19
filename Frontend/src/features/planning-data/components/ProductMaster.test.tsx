@@ -253,4 +253,69 @@ describe('ProductMaster', () => {
     expect(fetchMock.mock.calls[0][0]).toBe(`${API_BASE_URL}/api/v1/forecasts/from-sale-forecast`);
     expect(refresh).toHaveBeenCalled();
   });
+
+  /** whether the given materials appear in this order across the table body */
+  const trOrder = (materials: string[]) => {
+    const trs = materials.map((m) => screen.getByText(m).closest('tr') as HTMLElement);
+    return trs.every((tr, i) => i === 0 || trs[i - 1].compareDocumentPosition(tr) & Node.DOCUMENT_POSITION_FOLLOWING);
+  };
+
+  it('searches material and description and shows the row counter', () => {
+    renderMaster();
+    expect(screen.getByText('3 of 3 shown')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Search material or description'), { target: { value: '9905' } });
+    expect(screen.getByText('1 of 3 shown')).toBeTruthy();
+    expect(screen.queryByText('990101')).toBeNull();
+    expect(screen.getByText('990501')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Search material or description'), { target: { value: 'UBEPOL 990104' } });
+    expect(screen.getByText('990104')).toBeTruthy();
+    expect(screen.queryByText('990501')).toBeNull();
+  });
+
+  it('sorts by a column, flips on the second click and resets on the third', () => {
+    renderMaster();
+    fireEvent.click(screen.getByRole('button', { name: 'Material' }));
+    expect(screen.getByText('Material').closest('th')?.getAttribute('aria-sort')).toBe('ascending');
+    fireEvent.click(screen.getByRole('button', { name: 'Material' }));
+    expect(trOrder(['990501', '990104', '990101'])).toBe(true);
+    expect(screen.getByText('Material').closest('th')?.getAttribute('aria-sort')).toBe('descending');
+    fireEvent.click(screen.getByRole('button', { name: 'Material' }));
+    expect(trOrder(['990101', '990104', '990501'])).toBe(true);   // the default group order again
+    expect(screen.getByText('Material').closest('th')?.getAttribute('aria-sort')).toBeNull();
+  });
+
+  it('sorts stock by the effective value and keeps products without figures last', () => {
+    renderMaster({
+      stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data',
+        rows: [{ material_no: '990101', on_hand_tons: 90 }],
+        adjustments: [{ material_no: '990501', adjust_tons: 150, updated_at: null, updated_by: 'planner' }] },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Stock (t)' }));
+    expect(trOrder(['990101', '990501', '990104'])).toBe(true);
+    fireEvent.click(screen.getByRole('button', { name: 'Stock (t)' }));
+    expect(trOrder(['990501', '990101', '990104'])).toBe(true);   // 990104 (no figure) still last
+  });
+
+  it('filters to products whose effective stock is below their minimum', () => {
+    renderMaster({
+      stock: { snapshot_date: '2026-11-06', loaded_at: null, loaded_by: 'sample data',
+        rows: [{ material_no: '990101', on_hand_tons: 90 }, { material_no: '990104', on_hand_tons: 200 }],
+        adjustments: [] },
+    });
+    fireEvent.click(screen.getByLabelText('Below minimum only'));
+    expect(screen.getByText('990101')).toBeTruthy();
+    expect(screen.queryByText('990104')).toBeNull();   // 200 above its 100 minimum
+    expect(screen.queryByText('990501')).toBeNull();   // no stock figure at all
+    expect(screen.getByText('1 of 3 shown')).toBeTruthy();
+  });
+
+  it('orders the expanded order list by the earliest due date', () => {
+    renderMaster({ orders: [
+      { order_no: 'SO2', item_no: 1, material_no: '990101', tons: 100, shipped_tons: 0, open_tons: 100, due_date: '2026-11-30', status: 'open', ship_to: null },
+      { order_no: 'SO1', item_no: 1, material_no: '990101', tons: 300, shipped_tons: 100, open_tons: 200, due_date: '2026-11-12', status: 'open', ship_to: null },
+    ] });
+    fireEvent.click(within(row('990101')).getByRole('button', { name: 'Details of 990101' }));
+    const cells = screen.getAllByText(/SO[12]\/1/).map((el) => el.textContent);
+    expect(cells).toEqual(['SO1/1', 'SO2/1']);   // due date order, not import order
+  });
 });
