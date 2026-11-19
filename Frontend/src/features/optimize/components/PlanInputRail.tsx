@@ -1,9 +1,13 @@
 import Link from 'next/link';
-import { HORIZON_MIN, HORIZON_MAX, TIME_LIMIT_MIN, TIME_LIMIT_MAX, OBJECTIVES } from '../planForm';
+import {
+  MONTHS_MIN, MONTHS_MAX, TIME_LIMIT_MIN, TIME_LIMIT_MAX, OBJECTIVES,
+  monthHorizonDays, monthStartIso, planStartIso,
+} from '../planForm';
 import { clamp } from '@/lib/format';
 import type { OptimizePlan } from '../useOptimizePlan';
 import type { OptimizeResult } from '../types';
 import { DemandInputs } from './DemandInputs';
+import { ForecastGrid } from './ForecastGrid';
 
 // Left rail: every plan input plus the Run button
 export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: OptimizeResult }) {
@@ -51,15 +55,15 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
             />
           </div>
           <div className="opt-field">
-            <label htmlFor="opt-horizon">Horizon (days)</label>
+            <label htmlFor="opt-months">Months</label>
             <input
-              id="opt-horizon"
+              id="opt-months"
               type="number"
-              min={HORIZON_MIN}
-              max={HORIZON_MAX}
-              value={form.horizonDays}
-              onChange={(e) => patch({ horizonDays: Number(e.target.value) })}
-              onBlur={() => patch({ horizonDays: clamp(form.horizonDays, HORIZON_MIN, HORIZON_MAX) })}
+              min={MONTHS_MIN}
+              max={MONTHS_MAX}
+              value={form.months}
+              onChange={(e) => patch({ months: Number(e.target.value) })}
+              onBlur={() => patch({ months: clamp(form.months, MONTHS_MIN, MONTHS_MAX) })}
             />
           </div>
         </div>
@@ -76,7 +80,9 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
           </select>
         </div>
         <p className="opt-railnote">
-          Blank start date = next Monday · horizon {HORIZON_MIN}–{HORIZON_MAX} days · objective = fulfilled tons − {objective.penalty} × changeover days
+          Blank start date = next Monday · the plan runs through the last day of month{' '}
+          {monthStartIso(planStartIso(form), form.months - 1)} ({monthHorizonDays(planStartIso(form), form.months)} days,
+          e.g. 11/2026, 12/2026) · objective = fulfilled tons − {objective.penalty} × changeover days
         </p>
       </div>
 
@@ -153,12 +159,19 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
           </label>
         </div>
         {form.usePlanningData ? (
-          <p className="opt-railnote">
-            Orders, minimum stock and the monthly forecast come from the{' '}
-            <Link href="/planning-data">Planning Data</Link> page: stock, lots in QC
-            (5 days before output reaches stock), open sales orders and the forecast still to produce.
-            The plant rules stay on the product groups.
-          </p>
+          <>
+            <ForecastGrid
+              startMonth={monthStartIso(planStartIso(form), 0)}
+              months={form.months}
+              grades={grades}
+            />
+            <p className="opt-railnote">
+              Orders, minimum stock and the monthly forecast come from the{' '}
+              <Link href="/planning-data">Planning Data</Link> page: stock, lots in QC
+              (5 days before output reaches stock), open sales orders and the forecast still to produce.
+              The plant rules stay on the product groups.
+            </p>
+          </>
         ) : (
           <>
             <DemandInputs

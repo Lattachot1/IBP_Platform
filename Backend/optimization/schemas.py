@@ -24,7 +24,7 @@ class InitialState(BaseModel):
 
 
 class OptimizeRequest(BaseModel):
-    horizon_days: int = Field(default=28, ge=7, le=120)
+    horizon_days: int = Field(default=28, ge=7, le=190)   # max fits 6 calendar months
     start_date: str = ""        # ISO date; "" = next Monday
     objective: str = "maximize_fulfilled"
     demand: Optional[Dict[str, Tons]] = None   # tons per grade; None = defaults

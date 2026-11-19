@@ -16,6 +16,7 @@ stock or hand-enter stock adjustments.
 """
 
 import logging
+import re
 from datetime import date
 from typing import List, Literal, Optional
 
@@ -219,3 +220,113 @@ def handle_read_forecasts(month_from: Optional[date] = None, month_to: Optional[
         return store.get_store().forecasts(month_from, month_to)
     except StoreUnavailable:
         raise _unavailable("could not load forecasts")
+
+
+# ----------------------------------------------------------------------------
+# hand-set forecasts (planner edits on the /optimize page)
+# ----------------------------------------------------------------------------
+_MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def _parse_month(text: str) -> date:
+    if not _MONTH_RE.match(text or ""):
+        raise HTTPException(status_code=422, detail="Month must look like '2026-11'")
+    year, month = int(text[:4]), int(text[5:7])
+    return date(year, month, 1)
+
+
+def _shift_month(first: date, count: int) -> date:
+    total = first.month - 1 + count
+    return date(first.year + total // 12, total % 12 + 1, 1)
+
+
+def _plant_group_ids() -> List[str]:
+    return [g["id"] for g in plant_groups()]
+
+
+class ForecastUpdate(BaseModel):
+    tons: float = Field(ge=0, allow_inf_nan=False)
+
+
+class ForecastCell(BaseModel):
+    group_code: str
+    month: date
+    tons: Optional[float] = None
+    source: Optional[Literal["manual", "engine"]] = None
+    updated_by: Optional[str] = None
+    ordered_tons: float = 0.0
+
+
+@router.get("/api/v1/forecast-grid", response_model=List[ForecastCell])
+def handle_forecast_grid(start_month: str, months: int = Query(default=3, ge=1, le=12)) -> List[ForecastCell]:
+    """The effective monthly forecast per plant group over the given months -
+    the manual row when one exists, else the engine's - plus each month's
+    order tons, which is the floor a hand-set forecast may not go below."""
+    first = _parse_month(start_month)
+    last = _shift_month(first, months - 1)
+    try:
+        st = store.get_store()
+        rows = st.forecasts(first, last)
+        ordered = st.ordered_tons_by_month(_plant_group_ids(), first, _shift_month(last, 1))
+    except StoreUnavailable:
+        raise _unavailable("could not load the forecast grid")
+    effective = {}
+    for row in rows:
+        key = (row.group_code, row.forecast_month)
+        if row.source == "manual" or key not in effective:
+            effective[key] = row
+    cells = []
+    for group in _plant_group_ids():
+        month = first
+        for _ in range(months):
+            row = effective.get((group, month))
+            cells.append(ForecastCell(
+                group_code=group, month=month,
+                tons=row.tons if row else None, source=row.source if row else None,
+                updated_by=row.updated_by if row else None,
+                ordered_tons=ordered.get((group, month), 0.0)))
+            month = _shift_month(month, 1)
+    return cells
+
+
+@router.put("/api/v1/forecasts/{group_code}/{month}", response_model=Forecast)
+def handle_set_forecast(group_code: str, month: str, req: ForecastUpdate,
+                        updated_by: str = _editor()) -> Forecast:
+    """Hand-set the effective monthly forecast of one group as a 'manual'
+    row that overrides the engine's and the Sale forecast's number. The
+    planner's rule: orders keep their own due dates and priority, so the
+    hand-set forecast may never sit below the month's actual order tons -
+    the part above them is demand without a due date, produced within the
+    month."""
+    month_date = _parse_month(month)
+    if group_code not in _plant_group_ids():
+        raise HTTPException(status_code=422, detail="%s is not a plant group" % group_code)
+    try:
+        st = store.get_store()
+        ordered = st.ordered_tons_by_month([group_code], month_date, _shift_month(month_date, 1)) \
+            .get((group_code, month_date), 0.0)
+        if req.tons < ordered - 1e-9:
+            raise HTTPException(status_code=422, detail=(
+                "Forecast for %s %s cannot go below the month's order tons (%s t): "
+                "orders keep their own due dates, the hand-set forecast only adds demand above them"
+                % (group_code, month, format(ordered, "g"))))
+        st.upsert_forecasts([Forecast(group_code=group_code, forecast_month=month_date,
+                                      source="manual", tons=req.tons)], updated_by)
+        return next(f for f in st.forecasts(month_date, month_date)
+                    if f.group_code == group_code and f.source == "manual")
+    except StoreUnavailable:
+        raise _unavailable("could not save the hand-set forecast")
+
+
+@router.delete("/api/v1/forecasts/{group_code}/{month}/manual")
+def handle_clear_forecast(group_code: str, month: str) -> dict:
+    """Remove the hand-set forecast of one group and month: the engine's or
+    the Sale forecast's number shows through again (re-run the Sale forecast
+    import to restore that file's value)."""
+    month_date = _parse_month(month)
+    if group_code not in _plant_group_ids():
+        raise HTTPException(status_code=422, detail="%s is not a plant group" % group_code)
+    try:
+        return {"deleted": store.get_store().delete_forecast(group_code, month_date)}
+    except StoreUnavailable:
+        raise _unavailable("could not clear the hand-set forecast")

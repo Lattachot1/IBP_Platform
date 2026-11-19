@@ -7,13 +7,16 @@ import { DEMAND_DEFAULT, GRADES } from './samplePlan';
 // Bounds mirror OptimizeRequest in Backend/optimization/schemas.py so the
 // page never sends a request the backend would reject with 422.
 export const HORIZON_MIN = 7;
-export const HORIZON_MAX = 120;
+export const HORIZON_MAX = 190;          // fits 6 calendar months from any day
+export const MONTHS_MIN = 1;
+export const MONTHS_MAX = 6;
 export const TIME_LIMIT_MIN = 5;
 export const TIME_LIMIT_MAX = 300;
 
 /** Every input the planner can edit — one field per OptimizeRequest field. */
 export interface PlanForm {
-  horizonDays: number;
+  /** calendar months the plan spans; the horizon always ends on a month end */
+  months: number;
   startDate: string;     // ISO date; '' lets the backend pick next Monday
   objective: string;
   holidays: string[];    // ISO dates; blank rows are dropped when sending
@@ -38,7 +41,7 @@ export const OBJECTIVES = [
 ];
 
 export const BASE_FORM: PlanForm = {
-  horizonDays: 28,
+  months: 3,
   startDate: '',
   objective: 'maximize_fulfilled',
   holidays: [],
@@ -46,7 +49,7 @@ export const BASE_FORM: PlanForm = {
   remainDays: 2,
   rx12Age: 54,
   rx34Age: 0,
-  timeLimitS: 30,
+  timeLimitS: 60,
   demand: { ...DEMAND_DEFAULT },
   usePlanningData: false,
   productDemand: {},
@@ -65,6 +68,28 @@ export function nextMondayIso(): string {
   const ahead = (1 - d.getDay() + 7) % 7 || 7;
   d.setDate(d.getDate() + ahead);
   return toIso(d);
+}
+
+/** The start the plan actually uses: the picked date, else the next Monday. */
+export function planStartIso(f: PlanForm): string {
+  return f.startDate || nextMondayIso();
+}
+
+/** First-of-month ISO `count` months from `startIso`'s month (count 0 = same month). */
+export function monthStartIso(startIso: string, count: number): string {
+  const year = Number(startIso.slice(0, 4));
+  const month = Number(startIso.slice(5, 7));
+  const total = month - 1 + count;
+  return `${year + Math.floor(total / 12)}-${String((total % 12) + 1).padStart(2, '0')}-01`;
+}
+
+/** Days from `startIso` through the last day of a `months`-month span
+ * (2026-11-23 + 3 months runs through 2027-01-31 = 70 days). Noon on both
+ * ends keeps any timezone offset out of the arithmetic. */
+export function monthHorizonDays(startIso: string, months: number): number {
+  const start = Date.parse(`${startIso}T12:00:00Z`);
+  const afterLastMonth = Date.parse(`${monthStartIso(startIso, months)}T12:00:00Z`);
+  return Math.round((afterLastMonth - start) / 86_400_000);
 }
 
 export function scaleDemand(base: Record<string, number>, factor: number): Record<string, number> {
@@ -101,9 +126,11 @@ export function buildRequest(f: PlanForm) {
     demand[g.id] = groupDemand(f, g.id);
     if (!f.usePlanningData) productRows(f, g.id).forEach(([material, v]) => (productDemand[material] = v));
   });
+  const months = clamp(f.months, MONTHS_MIN, MONTHS_MAX);
+  const start = planStartIso(f);
   return {
-    horizon_days: clamp(f.horizonDays, HORIZON_MIN, HORIZON_MAX),
-    start_date: f.startDate,
+    horizon_days: clamp(monthHorizonDays(start, months), HORIZON_MIN, HORIZON_MAX),
+    start_date: start,
     objective: f.objective,
     demand,
     holidays: f.holidays.filter(Boolean),
@@ -132,7 +159,7 @@ export const PRESETS: Preset[] = [
   {
     id: 'base',
     label: 'Base',
-    hint: 'Demo demand, 28 days, RX1-2 at age 54',
+    hint: 'Demo demand, 3 months, RX1-2 at age 54',
     apply: (c) => ({ ...BASE_FORM, startDate: c.startDate, holidays: c.holidays, demand: { ...DEMAND_DEFAULT } }),
   },
   {

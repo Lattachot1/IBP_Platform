@@ -72,6 +72,11 @@ export function putJson<T>(path: string, body: unknown, options: CallOptions = {
   );
 }
 
+/** DELETE a resource; same errors as getJson. */
+export function deleteJson<T>(path: string, options: CallOptions = {}): Promise<T> {
+  return call<T>(path, { method: 'DELETE' }, options);
+}
+
 /** POST a raw body (e.g. an uploaded CSV file, sent byte for byte); same errors as getJson. */
 export function postRaw<T>(path: string, body: Blob | string, contentType: string, options: CallOptions = {}): Promise<T> {
   return call<T>(path, { method: 'POST', headers: { 'Content-Type': contentType }, body }, options);
