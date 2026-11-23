@@ -82,6 +82,20 @@ def test_hand_stock_adjustments_win_over_the_snapshot_value():
     assert any("1 materials use hand-entered stock instead of the snapshot" in w for w in inputs.warnings)
 
 
+def test_manual_changeover_uses_planning_snapshot_not_demo_demand(monkeypatch):
+    from optimization import manual
+
+    inputs = build([product("OLD", "VCR412"), product("NEW", "VCR617")],
+                   orders=[order("1", "NEW", 1510, date(2026, 11, 16))], horizon=9)
+    monkeypatch.setattr(planning, "load_inputs", lambda *args: inputs)
+    req = OptimizeRequest(start_date=START.isoformat(), horizon_days=9, use_planning_data=True,
+                          demand={"VCR412": 9000, "VCR617": 0},
+                          initial={"grade": "VCR412", "remain_days": 2, "rx12_age": 0}).model_dump()
+    res = manual.evaluate({**req, "campaigns": [{"grade": "VCR412", "days": 2}, {"grade": "VCR617", "days": 7}]})
+    assert res["days"][2]["parts"] == [{"grade": "VCR617", "tons": 190}]
+    assert res["days"][2]["products"] == [{"material_no": "NEW", "tons": 190}]
+
+
 def test_hand_stock_adjustments_stand_alone_without_a_snapshot():
     snap = StockSnapshot(adjustments=[StockAdjustment(material_no="A", adjust_tons=55)])
     inputs = build([product("A")], snap)

@@ -35,6 +35,7 @@ except ImportError:  # pyyaml missing → the sample fallback keeps the API aliv
     yaml = None
 
 from optimization import planning, product_split
+from optimization.reactor import boundary_checks
 from optimization.sample_plan import (
     ASSUMPTIONS,
     CHECKS,
@@ -249,9 +250,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     if req.get("use_planning_data"):
         qc_days = int((cfg.get("planning") or {}).get("qc_days", 5))
         plan_inputs = planning.load_inputs(grades, start, H, qc_days)
-        demand = {g: 0 for g in grades}
-        for product in plan_inputs.products:
-            demand[product.group] += int(round(planning.net_requirement(product)))
+        demand = planning.group_requirements(plan_inputs, grades)
 
     initial = req.get("initial") or {}
     g0 = gi.get(initial.get("grade") or grades[0], 0)
@@ -308,12 +307,11 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         total = sum(prod[d])
         m.Add(total <= ceil_v).OnlyEnforceIf(chg[d])
         m.Add(total <= cap_v).OnlyEnforceIf(chg[d].Not())
-    # both groups put out at least 1 ton on a changeover day (prevents
-    # zero-output days from gaming the VCR campaign counter)
+    # The main-grade sequence identifies the switch even when outgoing
+    # production is zero. Keep the existing incoming-grade start rule.
     for d in range(1, H):
         for (f, t) in transitions:
             lit = [chg[d], is_main[d - 1][gi[f]], is_main[d][gi[t]]]
-            m.Add(prod[d][gi[f]] >= 1).OnlyEnforceIf(lit)
             m.Add(prod[d][gi[t]] >= 1).OnlyEnforceIf(lit)
 
     # ---- min run days -------------------------------------------------------
@@ -355,7 +353,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         vcr_start.append(sv)
         ev = m.NewBoolVar(f"vcre_{d}")
         if d == H - 1:
-            m.Add(ev == vcr_main[d])
+            m.Add(ev == 0)  # No observed switch back to BR.
         else:
             m.Add(ev <= vcr_main[d])
             m.Add(ev <= vcr_main[d + 1].Not())
@@ -391,8 +389,12 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
         m.Add(run34[d] == 1).OnlyEnforceIf(cl12[d])
         m.Add(run12[d] == 1).OnlyEnforceIf(cl34[d])
     # cleaning windows are exactly `clean_days` long and never overlap
+    for d in range(H - 1):
+        m.Add(cl34[d + 1] == 1).OnlyEnforceIf(vcr_end[d])
+    starts_by_pair = []
     for cl, cl_name in ((cl12, "cl12"), (cl34, "cl34")):
         start_c = [m.NewBoolVar(f"{cl_name}_s_{d}") for d in Hr]
+        starts_by_pair.append(start_c)
         for d in Hr:
             m.Add(cl[d] == sum(start_c[j] for j in range(max(0, d - clean_days + 1), d + 1)))
             for j in range(max(0, d - clean_days + 1), d):
@@ -405,15 +407,21 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     age34 = [m.NewIntVar(0, rx12_max, f"a34_{d}") for d in range(H + 1)]
     m.Add(age12[0] == age12_0)
     m.Add(age34[0] == age34_0)
-    for d in range(H):
-        m.Add(age12[d + 1] == age12[d] + run12[d]).OnlyEnforceIf(cl12[d].Not())
-        m.Add(age12[d + 1] == 0).OnlyEnforceIf(cl12[d])
-        m.Add(age34[d + 1] == age34[d] + run34[d]).OnlyEnforceIf(cl34[d].Not())
-        m.Add(age34[d + 1] == 0).OnlyEnforceIf(cl34[d])
+    for ages, runs, starts in zip((age12, age34), (run12, run34), starts_by_pair):
+        for d in Hr:
+            advance = m.Add(ages[d + 1] == ages[d] + runs[d])
+            if d + 1 >= clean_days:
+                completed = starts[d + 1 - clean_days]
+                advance.OnlyEnforceIf(completed.Not())
+                m.Add(ages[d + 1] == 0).OnlyEnforceIf(completed)
     # gates: RX3-4 young enough on the first VCR day; RX1-2 young enough on the last
     for d in Hr:
         m.Add(age34[d] <= rx34_vcr_max).OnlyEnforceIf(vcr_start[d])
-        m.Add(age12[d] <= rx12_vcr_end_max).OnlyEnforceIf(vcr_end[d])
+        # Age cannot decrease during VCR. Do not hide an impossible exit
+        # by starting a short VCR block just before the horizon ends.
+        m.Add(age12[d + 1] <= rx12_vcr_end_max).OnlyEnforceIf(vcr_main[d])
+        if H - d < vcr_total_min:
+            m.Add(age12[d] + vcr_total_min <= rx12_vcr_end_max).OnlyEnforceIf(vcr_start[d])
 
     # ---- objective ----------------------------------------------------------
     changeovers = sum(chg[d] for d in range(1, H))
@@ -547,6 +555,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
             "wd": WD_NAMES[dd.weekday()],
             "wknd": dd.weekday() >= 5,
             "chg": chgd,
+            "main_grade": cur,
             "cap": cap if chgd else None,
             "parts": parts,
             "p1": p1s,
@@ -574,7 +583,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     }
 
     # ---- constraint check report -------------------------------------------
-    checks = []
+    checks = boundary_checks(vcr_v, {"RX1-2": cl12_v, "RX3-4": cl34_v}, vcr_total_min, clean_days)
     checks.append({
         "level": "ok",
         "text": ("%d changeovers, all in the Allow_GradeChange table: %s" % (len(chg_list), ", ".join(chg_list)))
@@ -593,7 +602,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     })
     if vcr_days:
         s_ages = [age34_v[d] for d in Hr if start_vcr_v[d]]
-        e_ages = [age12_v[d] for d in Hr if end_vcr_v[d]]
+        e_ages = [age12_v[d + 1] for d in Hr if end_vcr_v[d]]
         checks.append({"level": "ok", "text": "VCR: %d days across %d campaign(s) (≥ %d required)"
                        % (vcr_days, n_campaigns, vcr_total_min)})
         checks.append({"level": "ok", "text": "RX ages at VCR boundaries — start RX3-4: %s (≤ %d) · end RX1-2: %s (< %d)"

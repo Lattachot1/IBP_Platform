@@ -7,7 +7,7 @@ day-by-day plan and checks it against every rule in plant_config.yaml —
 the same rules the CP-SAT model enforces, with the same semantics:
 
   - transitions limited to the Allow_GradeChange pairs, changeover-day
-    output capped by the pair ceiling (split half/half here)
+    output capped by the pair ceiling (split by remaining demand)
   - min-run days per campaign (final campaign waived at the horizon end),
     initial campaign governed by `initial.remain_days`
   - VCR campaigns: combined length >= min_total_days (waived when the
@@ -15,8 +15,8 @@ the same rules the CP-SAT model enforces, with the same semantics:
     all four reactors running
   - reactor lifecycle: cleaning windows of exactly `cleaning_days`, one
     pair at a time, pair age <= rx12_max_age_days, RX3-4 age <= 15 on the
-    first VCR day, RX1-2 age < 50 on the last VCR day (ages are counted
-    before that day's production, like the solver's age variables)
+    first VCR day, RX1-2 age < 50 after the last VCR day's production;
+    RX3-4 starts cleaning on the first BR day after VCR
   - calendar: grade switches only on weekdays, never on company holidays
 
 The response has the same shape as the solver's so the /optimize page
@@ -37,6 +37,7 @@ from optimization.engine import (
     _next_monday,
 )
 from optimization.sample_plan import DEMAND_DEFAULT
+from optimization.reactor import boundary_checks
 
 PAIRS = ("RX1-2", "RX3-4")
 
@@ -70,6 +71,9 @@ def draft_from_result(res: dict) -> dict:
     days = res.get("days") or []
     mains = []
     for i, d in enumerate(days):
+        if d.get("main_grade"):
+            mains.append(d["main_grade"])
+            continue
         if not d["parts"]:
             mains.append(mains[-1] if mains else "")
             continue
@@ -127,12 +131,10 @@ def evaluate(req: dict) -> dict:
     result = _evaluate(_load_config(), req)
     if demand_split is not None:
         product_split.apply(result, demand_split)
-    if req.get("use_planning_data"):
-        _attach_planning(result, _load_config(), req)
     return result
 
 
-def _attach_planning(result: dict, cfg: dict, req: dict) -> None:
+def _attach_planning(result: dict, cfg: dict, inputs) -> None:
     """Product split + planning section for a HAND-EDITED plan built from
     the planning data. The edited days fix each group's output per day; the
     products share it by order share (largest remainder), then planning
@@ -146,10 +148,6 @@ def _attach_planning(result: dict, cfg: dict, req: dict) -> None:
     caps = {g: int(cfg["grades"][g]["daily_capacity_tons"]) for g in grades}
     days = result["days"]
     H = len(days)
-    start = date.fromisoformat(result["start_date"])
-    qc_days = int((cfg.get("planning") or {}).get("qc_days") or 5)
-
-    inputs = planning.load_inputs(grades, start, H, qc_days)
     prod = [{} for _ in range(H)]
     for d, day in enumerate(days):
         for part in day["parts"]:
@@ -203,6 +201,11 @@ def _evaluate(cfg: dict, req: dict) -> dict:
         start = _next_monday(date.today())
     dates = [start + timedelta(days=i) for i in range(H)]
     blocked = [d.weekday() >= 5 or d.isoformat() in holidays for d in dates]
+    plan_inputs = None
+    if req.get("use_planning_data"):
+        from optimization import planning
+        plan_inputs = planning.load_inputs(grades, start, H, int(cfg.get("planning", {}).get("qc_days", 5)))
+        demand = planning.group_requirements(plan_inputs, grades)
 
     initial = req.get("initial") or {}
     g0 = initial.get("grade") or grades[0]
@@ -239,11 +242,13 @@ def _evaluate(cfg: dict, req: dict) -> dict:
 
     # ---- cleaning windows ---------------------------------------------------
     cl = {p: [False] * H for p in PAIRS}
+    completions = {p: set() for p in PAIRS}
     for c in req.get("cleanings") or []:
         pair = c["pair"]
         if pair not in cl:
             raise ValueError("unknown reactor pair %r" % pair)
         s = max(0, min(H - 1, int(c["start"])))
+        completions[pair].add(s + clean_days - 1)
         overlap = [j for j in range(s, min(H, s + clean_days)) if cl[pair][j]]
         if overlap:
             conflict("%s has two cleaning windows overlapping on %s" % (pair, _fmt_day(dates[overlap[0]])), overlap)
@@ -304,7 +309,7 @@ def _evaluate(cfg: dict, req: dict) -> dict:
             else:
                 run[p][d] = True
         for p in PAIRS:
-            if cl[p][d]:
+            if d in completions[p]:
                 age[p][d + 1] = 0
             else:
                 age[p][d + 1] = age[p][d] + (1 if run[p][d] else 0)
@@ -370,24 +375,23 @@ def _evaluate(cfg: dict, req: dict) -> dict:
             if b < H - 1:
                 conflict("VCR campaign %s is %d day(s) — VCR-412 + VCR-617 must total at least %d"
                          % (_fmt_window((a, b), dates), length, vcr_total_min), range(a, b + 1))
-            else:
-                warns.append({"level": "warn", "days": list(range(a, b + 1)),
-                              "text": "VCR campaign runs to the horizon end with %d day(s) so far — it has to continue to %d in the next plan"
-                              % (length, vcr_total_min)})
-        if blocked[b]:
+        if b < H - 1 and not cl["RX3-4"][b + 1]:
+            conflict("RX3-4 must start cleaning on the first BR day after VCR", [b + 1])
+        if b < H - 1 and blocked[b]:
             conflict("VCR campaign ends on a weekend/holiday (%s) — the switch back to BR150 must land on a weekday"
                      % _fmt_day(dates[b]), [b])
         if age["RX3-4"][a] > rx34_vcr_max:
             conflict("RX3-4 age is %d on the first VCR day (%s) — must be ≤ %d; clean RX3-4 earlier"
                      % (age["RX3-4"][a], _fmt_day(dates[a]), rx34_vcr_max), [a])
-        if age["RX1-2"][b] >= rx12_vcr_end:
-            conflict("RX1-2 age is %d on the last VCR day (%s) — must be < %d; clean RX1-2 before VCR"
-                     % (age["RX1-2"][b], _fmt_day(dates[b]), rx12_vcr_end), [b])
+        owed = max(0, vcr_total_min - length) if b == H - 1 else 0
+        if age["RX1-2"][b + 1] + owed >= rx12_vcr_end:
+            conflict("RX1-2 age after VCR production is %d on %s with %d mandatory day(s) beyond the plan; "
+                     "age at exit must be < %d" % (age["RX1-2"][b + 1], _fmt_day(dates[b]), owed, rx12_vcr_end), [b])
+    warns.extend(boundary_checks(vcr, cl, vcr_total_min, clean_days))
 
     # ---- production and fulfillment ----------------------------------------
     # Normal days run at full capacity. Changeover days split the pair
-    # ceiling like the solver's free split would: at least 1 t for each
-    # group, the rest to whichever grade still has the larger shortage
+    # ceiling with no outgoing floor. Prefer the grade with the larger shortage
     # (computed after all normal-day output, then day by day in order).
     available = [
         (run["RX1-2"][d] and run["RX3-4"][d]) if vcr[d] else (run["RX1-2"][d] or run["RX3-4"][d])
@@ -407,14 +411,12 @@ def _evaluate(cfg: dict, req: dict) -> dict:
         ceiling = transitions.get((f, t), caps[t])
         if not available[d]:
             out, inc = 0, 0
-        elif ceiling <= 2:
-            out, inc = min(1, ceiling), max(0, ceiling - 1)
         else:
-            rest = ceiling - 2
             short_f = max(0, demand[f] - produced[f])
             short_t = max(0, demand[t] - produced[t])
-            give_f = min(rest, short_f) if short_f >= short_t else rest - min(rest, short_t)
-            out, inc = 1 + give_f, ceiling - 1 - give_f
+            preferred = short_f if short_f >= short_t else min(short_f, max(0, ceiling - short_t))
+            out = max(0, ceiling - caps[t], min(preferred, caps[f], ceiling - 1))
+            inc = ceiling - out
         day_parts[d] = [{"grade": f, "tons": out}, {"grade": t, "tons": inc}]
         produced[f] += out
         produced[t] += inc
@@ -441,7 +443,7 @@ def _evaluate(cfg: dict, req: dict) -> dict:
             notes.append("No reactor pair available — no output credited")
         if vcr[d] and (d == 0 or not vcr[d - 1]):
             notes.append("VCR campaign starts")
-        if vcr[d] and (d == H - 1 or not vcr[d + 1]):
+        if vcr[d] and d < H - 1 and not vcr[d + 1]:
             notes.append("VCR campaign ends")
         for p, key in (("RX1-2", "RX1-2"), ("RX3-4", "RX3-4")):
             if cl[p][d] and (d == 0 or not cl[p][d - 1]):
@@ -457,6 +459,7 @@ def _evaluate(cfg: dict, req: dict) -> dict:
             "wd": WD_NAMES[dd.weekday()],
             "wknd": dd.weekday() >= 5,
             "chg": chg[d],
+            "main_grade": cur_g,
             "cap": cap if chg[d] else None,
             "parts": parts,
             "p1": p1s,
@@ -495,7 +498,7 @@ def _evaluate(cfg: dict, req: dict) -> dict:
     if vcr_days:
         oks.append({"level": "ok", "text": "VCR: %d day(s) across %d campaign(s) (≥ %d required) · RX3-4 age at start: %s · RX1-2 age at end: %s"
                     % (vcr_days, len(vcr_blocks), vcr_total_min,
-                       [age["RX3-4"][a] for a, _ in vcr_blocks], [age["RX1-2"][b] for _, b in vcr_blocks])})
+                       [age["RX3-4"][a] for a, _ in vcr_blocks], [age["RX1-2"][b + 1] for _, b in vcr_blocks if b < H - 1])})
     else:
         oks.append({"level": "ok", "text": "No VCR campaign scheduled — age gates not triggered"})
     oks.append({"level": "ok", "text": "Cleanings — RX1-2: %s · RX3-4: %s" % (
@@ -533,7 +536,7 @@ def _evaluate(cfg: dict, req: dict) -> dict:
         "solve_s": 0.0,
     }
 
-    return {
+    result = {
         "status": "feasible" if n_conf == 0 else "conflicts",
         "mode": "manual",
         "conflicts": n_conf,
@@ -549,3 +552,6 @@ def _evaluate(cfg: dict, req: dict) -> dict:
         "checks": conflicts + warns + oks,
         "assumptions": cfg.get("assumptions") or [],
     }
+    if plan_inputs is not None:
+        _attach_planning(result, cfg, plan_inputs)
+    return result

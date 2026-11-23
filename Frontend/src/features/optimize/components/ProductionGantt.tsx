@@ -15,7 +15,7 @@ export function ProductionGantt({ plan, data, view }: { plan: OptimizePlan; data
     return d.parts.map((p, k) => (
       <div
         key={p.grade + k}
-        className={'opt-gblk' + (d.chg ? ' half' : '')}
+        className={'opt-gblk' + (d.parts.length > 1 ? ' half' : '')}
         style={{
           background: `var(--s${slotOf(p.grade)})`,
           color: `var(--s${slotOf(p.grade)}i)`,

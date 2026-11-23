@@ -87,8 +87,10 @@ def validate(label, res, cfg, req):
         blocks.append((s, H - 1))
     for a, b in blocks:
         seq = mains[a:b + 1]
-        check("%s vcr len [%d-%d]" % (label, a, b), len(seq) >= cfg["vcr"]["min_total_days"], "%d days" % len(seq))
-        check("%s vcr entry [%d-%d]" % (label, a, b), a > 0 and mains[a - 1] == "BR150",
+        if b < H - 1:
+            check("%s vcr len [%d-%d]" % (label, a, b), len(seq) >= cfg["vcr"]["min_total_days"], "%d days" % len(seq))
+            check("%s vcr exit cleaning d%d" % (label, b + 1), days[b + 1]["p2"] == "clean")
+        check("%s vcr entry [%d-%d]" % (label, a, b), a == 0 or mains[a - 1] == "BR150",
               "enters from %s" % (mains[a - 1] if a else "horizon start"))
         seen617 = False
         for gm in seq:
@@ -132,13 +134,16 @@ def validate(label, res, cfg, req):
     rx12_max = cfg["reactor"]["rx12_max_age_days"]
     rx34_gate = cfg["reactor"]["rx34_max_age_before_vcr"]
     rx12_gate = cfg["reactor"]["rx12_max_age_at_vcr_end"]
+    clean12 = clean34 = 0
     for i, d in enumerate(days):
         first_vcr = mains[i] in ("VCR412", "VCR617") and (i == 0 or mains[i - 1] not in ("VCR412", "VCR617"))
         last_vcr = mains[i] in ("VCR412", "VCR617") and (i == H - 1 or mains[i + 1] not in ("VCR412", "VCR617"))
         if first_vcr:
             check("%s rx34 gate d%d" % (label, i), age34 <= rx34_gate, "%d > %d" % (age34, rx34_gate))
-        age12 = age12 + 1 if d["p1"] == "prod" else (0 if d["p1"] == "clean" else age12)
-        age34 = age34 + 1 if d["p2"] == "prod" else (0 if d["p2"] == "clean" else age34)
+        clean12 = clean12 + 1 if d["p1"] == "clean" else 0
+        clean34 = clean34 + 1 if d["p2"] == "clean" else 0
+        age12 = 0 if clean12 and clean12 % clean_days == 0 else age12 + int(d["p1"] == "prod")
+        age34 = 0 if clean34 and clean34 % clean_days == 0 else age34 + int(d["p2"] == "prod")
         check("%s rx12 age d%d" % (label, i), age12 <= rx12_max, "%d > %d" % (age12, rx12_max))
         if last_vcr:
             check("%s rx12 vcr-end gate d%d" % (label, i), age12 < rx12_gate, "%d >= %d" % (age12, rx12_gate))
