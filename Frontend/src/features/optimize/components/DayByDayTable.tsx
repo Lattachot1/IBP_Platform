@@ -27,14 +27,9 @@ export function DayByDayTable({ plan, view }: { plan: OptimizePlan; view: Optimi
                   <td className={'mono' + (d.wknd ? ' wknd' : '')}>{d.date} · {d.wd}</td>
                   <td className="mono">
                     {d.parts
-                      .map((p, k) => {
-                        let seg = `${dispOf(p.grade, grades)} ${formatNumber(p.tons)}`;
-                        if (d.chg && k === d.parts.length - 1 && d.parts.length > 1) {
-                          seg += ` ≤ total ${formatNumber(d.cap ?? 0)}`;
-                        }
-                        return seg;
-                      })
+                      .map((p) => `${dispOf(p.grade, grades)} ${formatNumber(p.tons)}`)
                       .join(' + ')}
+                    {d.chg && d.cap != null && ` ≤ total ${formatNumber(d.cap)}`}
                     {d.products && d.products.length > 0 && (
                       <div className="opt-dayprod">
                         {d.products.map((p) => `${nameOf(productNames, p.material_no)} ${formatNumber(p.tons)}`).join(' · ')}

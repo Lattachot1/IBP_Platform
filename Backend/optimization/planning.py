@@ -576,6 +576,13 @@ def net_requirement(p: ProductInput) -> float:
     return max(0.0, need)
 
 
+def group_requirements(inputs, grades):
+    demand = dict.fromkeys(grades, 0)
+    for product in inputs.products:
+        demand[product.group] += int(round(net_requirement(product)))
+    return demand
+
+
 def checks(section: dict) -> List[dict]:
     """Constraint-check lines for the planning section (same shape as the engine's)."""
     out = [{"level": "warn", "text": w} for w in section["warnings"]]

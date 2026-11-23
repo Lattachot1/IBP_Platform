@@ -52,6 +52,10 @@ export function pairOfReactor(reactorId: string): Pair {
 function mainsFromResult(res: OptimizeResult): string[] {
   const mains: string[] = [];
   res.days.forEach((d) => {
+    if (d.main_grade) {
+      mains.push(d.main_grade);
+      return;
+    }
     if (!d.parts.length) {
       mains.push(mains[mains.length - 1] ?? '');
       return;

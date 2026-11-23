@@ -7,6 +7,7 @@ import { API_BASE_URL } from '@/lib/apiClient';
 import { SAMPLE_PLAN } from '../samplePlan';
 import { useOptimizePlan } from '../useOptimizePlan';
 import { ProductionGantt } from './ProductionGantt';
+import { DayByDayTable } from './DayByDayTable';
 
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
@@ -17,6 +18,22 @@ afterEach(() => {
 });
 
 describe('product split in the Gantt', () => {
+  it('keeps the changeover and its ceiling visible with incoming-only production', async () => {
+    const view = {
+      ...SAMPLE_PLAN, mode: 'cspat',
+      days: [{ ...SAMPLE_PLAN.days[0], main_grade: 'VCR617', chg: true, cap: 190,
+        parts: [{ grade: 'VCR617', tons: 190 }] }],
+    };
+    fetchMock.mockImplementation(async () => new Response(JSON.stringify(view), { status: 200 }));
+    const { result } = renderHook(() => useOptimizePlan());
+    await act(() => result.current.run());
+    const props = { plan: result.current, view: result.current.view! };
+    render(<><ProductionGantt {...props} data={result.current.data!} /><DayByDayTable {...props} /></>);
+    expect(screen.getByRole('cell', { name: /VCR-617 190 ≤ total 190/i, hidden: true })).toBeTruthy();
+    expect(screen.getByText('Changeover', { selector: '.opt-chip' })).toBeTruthy();
+    expect(document.querySelector('.opt-gblk.half')).toBeNull();
+  });
+
   it('shows the toggle when the plan carries per-product output and splits the blocks', async () => {
     const withProducts = {
       ...SAMPLE_PLAN, mode: 'cspat',

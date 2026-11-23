@@ -22,6 +22,7 @@ export interface ReactorCell {
 }
 
 export interface PlanDay {
+  main_grade?: string; // absent in legacy sample plans
   iso: string;
   date: string;
   wd: string;

@@ -44,7 +44,7 @@ transitions:
 
 reactor:
   rx12_max_age_days: 60          # RX1-2 must be cleaned before 60 production days
-  rx12_max_age_at_vcr_end: 50    # RX1-2 age at the last VCR day must be < 50 (model: <= 49)
+  rx12_max_age_at_vcr_end: 50    # RX1-2 age after the last VCR production day must be < 50
   rx34_max_age_before_vcr: 15    # RX3-4 age on the first VCR day must be <= 15
   cleaning_days: 7               # one pair at a time; age resets to 0 afterwards
 
@@ -65,8 +65,9 @@ assumptions:
   - After RX1-2 cleaning, BR production may continue — VCR just has to start while RX3-4 age <= 15 (client confirmed)
   - Min-run days count the changeover day as day 1 of the new grade (assumption, pending)
   - Reactor age counts production days only, not cleaning days (assumption, pending)
-  - On changeover days the split between the two groups is free within the pair ceiling (assumption, pending)
-  - The final campaign may run past the horizon — min-run is waived at the boundary
+  - Changeover capacity follows the grade sequence even with zero outgoing tons (boundary case pending plant confirmation); incoming output remains at least one modeled ton
+  - The final campaign may run past the horizon; remaining VCR days are reported, not automatically scheduled
+  - On return from VCR to BR, RX3-4 starts its cleaning window; age resets only after the full window
   - Products of one group share a day's output freely (same recipe; assumption, pending)
   - Forecast not yet ordered must be produced by the month end, not yet QC-released (assumption, pending)
   - Late orders weigh per ton-day and every product counts the same (client confirmed equal priority)
