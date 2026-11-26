@@ -41,9 +41,9 @@ export function PlanningKpiStrip({ planning }: { planning: PlanningSection }) {
         <div className="opt-foot">Σ tons under the minimum × days</div>
       </div>
       <div className="opt-tile">
-        <div className="opt-lab">Forecast short</div>
+        <div className="opt-lab">Monthly demand short</div>
         <div className="opt-val">{formatNumber(k.forecast_short_tons)} <small>t</small></div>
-        <div className="opt-foot">not-yet-ordered demand not produced by month end</div>
+        <div className="opt-foot">demand above orders short at month end</div>
       </div>
       <div className="opt-tile">
         <div className="opt-lab">Stock snapshot</div>
@@ -193,21 +193,23 @@ export function ForecastPanel({ planning, grades }: { planning: PlanningSection;
   if (planning.forecast.length === 0) {
     return (
       <section className="opt-panel" aria-label="Forecast coverage">
-        <h2 className="opt-ph">Forecast still to produce</h2>
-        <p className="opt-railnote">No forecast for the months of this plan — add one on the <Link href="/planning-data">Planning Data</Link> page.</p>
+        <h2 className="opt-ph">Demand above actual orders</h2>
+        <p className="opt-railnote">Enter a monthly demand total or load forecasts from <Link href="/planning-data">Planning Data</Link> before running the plan.</p>
       </section>
     );
   }
+  const productNames = Object.fromEntries(planning.products.map((p) => [p.material_no, p.description]));
+  const byProduct = planning.forecast.some((f) => f.material_no);
   return (
     <section className="opt-panel" aria-label="Forecast coverage">
-      <h2 className="opt-ph">Forecast still to produce (group × month)</h2>
+      <h2 className="opt-ph">Demand above actual orders ({byProduct ? 'product' : 'grade'} × month)</h2>
       <div className="opt-twrap">
         <table className="opt-table">
           <thead>
             <tr>
-              <th>Group</th>
+              <th>{byProduct ? 'Product' : 'Group'}</th>
               <th>Month</th>
-              <th className="num">Forecast</th>
+              <th className="num">Demand</th>
               <th className="num">Ordered</th>
               <th className="num">Not yet ordered</th>
               <th className="num">In this plan</th>
@@ -217,11 +219,11 @@ export function ForecastPanel({ planning, grades }: { planning: PlanningSection;
           </thead>
           <tbody>
             {planning.forecast.map((f) => (
-              <tr key={`${f.group}/${f.month}`}>
+              <tr key={`${f.material_no ?? f.group}/${f.month}`}>
                 <td>
                   <span className="opt-gcode">
                     <i className="opt-dot" style={{ background: `var(--s${slotOf(grades, f.group)})` }} />
-                    {dispOf(grades, f.group)}
+                    {f.material_no ? productNames[f.material_no] ?? f.material_no : dispOf(grades, f.group)}
                   </span>
                 </td>
                 <td className="mono">{f.month}{f.source === 'manual' ? ' · manual' : ''}</td>
@@ -240,8 +242,9 @@ export function ForecastPanel({ planning, grades }: { planning: PlanningSection;
         </table>
       </div>
       <p className="opt-railnote">
-        Not yet ordered = forecast − every order due that month. It is shared over the group&apos;s products by their order share,
-        and stock above each product&apos;s minimum counts against it. A month running past the plan counts only its days inside the plan.
+        Not yet ordered is the part of monthly demand above actual orders.
+        Stock above each product&apos;s minimum counts toward that demand.
+        A month running past the plan counts only its days inside the plan.
       </p>
     </section>
   );

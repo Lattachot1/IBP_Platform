@@ -150,6 +150,22 @@ def test_shares_follow_order_tons_or_split_equally():
     assert shares == {"A": 0.75, "B": 0.25, "V1": 0.5, "V2": 0.5}
 
 
+def test_forecast_split_uses_each_months_orders_including_lookahead():
+    orders = [order("1", "A", 30, date(2026, 11, 20)),
+              order("2", "B", 10, date(2026, 11, 20)),
+              order("3", "B", 100, date(2026, 12, 20)),
+              order("4", "A", 200, date(2027, 2, 20))]
+    forecasts = [Forecast(group_code="BR150", forecast_month=month, source="engine", tons=tons)
+                 for month, tons in [(date(2026, 11, 1), 140), (date(2026, 12, 1), 300), (date(2027, 1, 1), 180)]]
+    inputs = build([product("A"), product("B")], snapshot(START),
+                   orders=orders, forecasts=forecasts, horizon=53)
+    a, b = inputs.products
+    assert a.expected == {21: 75}
+    assert b.expected == {21: 25, 52: 200}
+    assert a.lookahead == pytest.approx(180 * 30 / 140)
+    assert b.lookahead == pytest.approx(180 * 110 / 140)
+
+
 def test_input_warnings():
     inputs = build([product("A"), product("OLD", "BR777"), product("GONE", active=False)],
                    snapshot(date(2026, 10, 20), A=1),

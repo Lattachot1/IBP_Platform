@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from optimization.engine import plant_groups
+from optimization.planning import product_demand_grid
 from planning_data import imports, products, stock_workbook, store
 from planning_data.records import Forecast, QcLot, SalesOrder, StockAdjustment, StockSnapshot
 from planning_data.sql import StoreUnavailable, WriteRejected
@@ -242,6 +243,21 @@ def _shift_month(first: date, count: int) -> date:
 
 def _plant_group_ids() -> List[str]:
     return [g["id"] for g in plant_groups()]
+
+
+@router.get("/api/v1/product-demand-grid")
+def handle_product_demand_grid(start_month: str, months: int = Query(default=3, ge=1, le=12)) -> list:
+    """Product order floors and proposed demand derived from stored grade forecasts."""
+    first = _parse_month(start_month)
+    month_starts = [_shift_month(first, offset) for offset in range(months)]
+    try:
+        st = store.get_store()
+        return product_demand_grid(
+            _plant_group_ids(), products.get_store().list(), st.sales_orders(),
+            st.forecasts(first, month_starts[-1]), month_starts,
+        )
+    except StoreUnavailable:
+        raise _unavailable("could not load the product demand grid")
 
 
 class ForecastUpdate(BaseModel):

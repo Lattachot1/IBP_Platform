@@ -8,6 +8,7 @@ from fastapi import APIRouter, HTTPException
 
 from optimization import engine as optimization_engine
 from optimization import manual as optimization_manual
+from optimization.planning import MonthlyDemandError
 from optimization.product_split import ProductDemandError
 from optimization.schemas import EvaluateRequest, OptimizeRequest
 from planning_data import products
@@ -64,6 +65,12 @@ def _numbers(req: OptimizeRequest) -> dict:
     return values
 
 
+def _validate_request(req: OptimizeRequest) -> None:
+    _reject_non_finite(_numbers(req))
+    if req.monthly_product_demand is not None and not req.use_planning_data:
+        raise HTTPException(status_code=422, detail="Monthly demand requires Planning Data orders.")
+
+
 @router.post("/api/v1/optimize")
 def handle_optimize(req: OptimizeRequest) -> dict:
     """Production schedule optimization (Phase 1: sample-plan stub).
@@ -77,10 +84,10 @@ def handle_optimize(req: OptimizeRequest) -> dict:
     set in memory mode) instead of `demand`, and adds a `planning` section
     plus `days[].products`. A configured database that is down -> 503.
     """
-    _reject_non_finite(_numbers(req))
+    _validate_request(req)
     try:
         return optimization_engine.solve(req.model_dump())
-    except ProductDemandError as exc:
+    except (ProductDemandError, MonthlyDemandError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except products.StoreUnavailable:
         log.exception("[Database] Planning data: optimize could not load its inputs")
@@ -96,10 +103,10 @@ def handle_optimize_evaluate(req: EvaluateRequest) -> dict:
     `checks` of level "conflict" for every broken rule, so the page draws
     the edited plan with the same Gantt and highlights the offending days.
     """
-    _reject_non_finite(_numbers(req))
+    _validate_request(req)
     try:
         return optimization_manual.evaluate(req.model_dump())
-    except ProductDemandError as exc:
+    except (ProductDemandError, MonthlyDemandError) as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except products.StoreUnavailable:
         log.exception("[Database] Products: evaluate could not load the product master")

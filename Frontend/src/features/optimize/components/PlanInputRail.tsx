@@ -1,4 +1,3 @@
-import Link from 'next/link';
 import {
   MONTHS_MIN, MONTHS_MAX, TIME_LIMIT_MIN, TIME_LIMIT_MAX, OBJECTIVES,
   monthHorizonDays, monthStartIso, planStartIso,
@@ -7,11 +6,10 @@ import { clamp } from '@/lib/format';
 import type { OptimizePlan } from '../useOptimizePlan';
 import type { OptimizeResult } from '../types';
 import { DemandInputs } from './DemandInputs';
-import { ForecastGrid } from './ForecastGrid';
 
 // Left rail: every plan input plus the Run button
 export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: OptimizeResult }) {
-  const { form, solving, problem, unapplied, showProblem, run, patch, updateDemand, setHoliday, removeHoliday, grades, objective, editing } = plan;
+  const { form, solving, problem, unapplied, showProblem, run, patch, demand, setHoliday, removeHoliday, grades, objective, editing } = plan;
   return (
     <aside className="opt-rail" aria-label="Plan parameters">
       <div className="opt-panel opt-runbar">
@@ -19,7 +17,7 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
           className={'opt-runbtn' + (unapplied && !solving ? ' attn' : '')}
           type="button"
           onClick={() => run()}
-          disabled={solving}
+          disabled={solving || demand.invalid}
         >
           {solving ? 'Solving…' : unapplied ? 'Run optimization (inputs changed)' : 'Run optimization'}
         </button>
@@ -137,55 +135,8 @@ export function PlanInputRail({ plan, data }: { plan: OptimizePlan; data: Optimi
       </div>
 
       <div className="opt-panel">
-        <h2 className="opt-ph">Demand source</h2>
-        <div className="opt-sourcepick" role="radiogroup" aria-label="Demand source">
-          <label>
-            <input
-              type="radio"
-              name="opt-source"
-              checked={!form.usePlanningData}
-              onChange={() => patch({ usePlanningData: false })}
-            />
-            Tons per grade (below)
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="opt-source"
-              checked={form.usePlanningData}
-              onChange={() => patch({ usePlanningData: true })}
-            />
-            Planning data — plan per product
-          </label>
-        </div>
-        {form.usePlanningData ? (
-          <>
-            <ForecastGrid
-              startMonth={monthStartIso(planStartIso(form), 0)}
-              months={form.months}
-              grades={grades}
-            />
-            <p className="opt-railnote">
-              Orders, minimum stock and the monthly forecast come from the{' '}
-              <Link href="/planning-data">Planning Data</Link> page: stock, lots in QC
-              (5 days before output reaches stock), open sales orders and the forecast still to produce.
-              The plant rules stay on the product groups.
-            </p>
-          </>
-        ) : (
-          <>
-            <DemandInputs
-              form={form}
-              grades={grades}
-              catalog={plan.catalog}
-              updateDemand={updateDemand}
-              updateProductDemand={plan.updateProductDemand}
-            />
-            <p className="opt-railnote">
-              Tons to deliver within the horizon — the solver maximizes how much of this it can produce. ▸ expands a group into its products.
-            </p>
-          </>
-        )}
+        <h2 className="opt-ph">Demand (tons per product)</h2>
+        <DemandInputs plan={plan} />
       </div>
 
       <div className="opt-panel">

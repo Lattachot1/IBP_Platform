@@ -112,3 +112,73 @@ def test_bad_inputs_are_rejected(memory_mode):
     assert client.put("/api/v1/forecasts/BR150/2026-11", json={"tons": -1}).status_code == 422
     assert grid(start_month="2026-13", months=2).status_code == 422
     assert grid(start_month="2026-11", months=0).status_code == 422
+
+
+def test_plan_demand_keeps_order_due_dates_and_adds_only_the_month_end_remainder(memory_mode):
+    seed_engine("BR150", 11, 2000)
+    seed_orders("9100000001,10,990101,x,1,9001,500,100,TO,2026/11/15,Open\n",
+                "9100000002,10,990102,x,1,9001,300,0,TO,2026/11/18,Open\n")
+    response = client.post("/api/v1/optimize", json={
+        "use_planning_data": True, "start_date": "2026-11-09", "horizon_days": 22,
+        "time_limit_s": 5, "monthly_product_demand": {"2026-11-01": {"990101": 650}},
+    })
+    assert response.status_code == 200, response.text
+    plan = response.json()["planning"]
+    assert [(o["due_date"], o["open_tons"]) for o in plan["orders"]] == [
+        ("2026-11-15", 400), ("2026-11-18", 300),
+    ]
+    assert [(m["material_no"], m["not_yet_ordered"], m["deadline"]) for m in plan["forecast"]] == [
+        ("990101", 150, "2026-11-30"),
+    ]
+    assert br150_cells(grid(start_month="2026-11", months=1).json()) == [(2000, "engine")]
+
+
+def test_plan_and_evaluator_check_latest_order_floor(memory_mode):
+    seed_orders("9100000001,10,990101,x,1,9001,700,100,TO,2026/11/15,Open\n")
+    payload = {
+        "use_planning_data": True, "start_date": "2026-11-09", "horizon_days": 22,
+        "time_limit_s": 5, "monthly_product_demand": {"2026-11-01": {"990101": 650}},
+    }
+    for path, body in (
+        ("/api/v1/optimize", payload),
+        ("/api/v1/optimize/evaluate", {**payload, "campaigns": [{"grade": "BR150", "days": 22}]}),
+    ):
+        response = client.post(path, json=body)
+        assert response.status_code == 422, response.text
+        assert "latest order total (700 t)" in response.json()["detail"]
+
+
+def test_evaluator_keeps_month_end_beyond_the_previous_120_day_limit(memory_mode):
+    response = client.post("/api/v1/optimize/evaluate", json={
+        "use_planning_data": True, "start_date": "2026-11-01", "horizon_days": 151,
+        "monthly_product_demand": {"2027-03-01": {"990101": 200}},
+        "campaigns": [{"grade": "BR150", "days": 151}],
+    })
+    assert response.status_code == 200, response.text
+    plan = response.json()
+    assert len(plan["days"]) == 151
+    assert plan["planning"]["forecast"][0]["deadline"] == "2027-03-31"
+
+
+
+def test_product_grid_distributes_only_unordered_forecast_and_preserves_order_floors(memory_mode):
+    seed_orders("9100000001,10,990101,x,1,9001,500,100,TO,2026/11/15,Open\n",
+                "9100000002,10,990102,x,1,9001,300,0,TO,2026/11/18,Open\n",
+                "9100000003,10,990104,x,1,9001,100,0,TO,2026/11/18,Open\n",
+                "9100000004,10,990101,x,1,9001,100,100,TO,2026/10/18,Completed\n",
+                "9100000005,10,990102,x,1,9001,200,0,TO,2027/01/18,Open\n")
+    seed_engine("BR150", 11, 1300)
+    seed_engine("BR150", 12, 900)
+    response = client.get("/api/v1/product-demand-grid", params={"start_month": "2026-11", "months": 2})
+    assert response.status_code == 200, response.text
+    rows = {r["material_no"]: r for r in response.json() if r["group_code"] == "BR150"}
+    assert rows["990101"]["months"][0] == {
+        "month": "2026-11-01", "ordered_tons": 500, "group_ordered_tons": 900,
+        "forecast_share": 0.625, "tons": 750,
+    }
+    assert rows["990102"]["months"][0]["tons"] == 450
+    assert rows["990101"]["months"][1]["tons"] == 600
+    assert rows["990102"]["months"][1]["tons"] == 300
+    assert sum(r["months"][0]["tons"] or r["months"][0]["ordered_tons"] for r in rows.values()) == 1300
+    assert rows["990104"]["is_active"] is False
+    assert rows["990104"]["months"][0]["tons"] is None

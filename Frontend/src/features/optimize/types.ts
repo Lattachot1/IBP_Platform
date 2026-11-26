@@ -148,6 +148,7 @@ export interface PlannedProduct {
 
 export interface ForecastMonthRow {
   group: string;
+  material_no?: string;
   month: string;
   source: string;
   forecast: number;
