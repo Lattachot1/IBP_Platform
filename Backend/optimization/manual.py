@@ -38,6 +38,7 @@ from optimization.engine import (
 )
 from optimization.sample_plan import DEMAND_DEFAULT
 from optimization.reactor import boundary_checks
+from optimization.schemas import MAX_HORIZON_DAYS
 
 PAIRS = ("RX1-2", "RX3-4")
 
@@ -186,7 +187,7 @@ def _evaluate(cfg: dict, req: dict) -> dict:
     holidays = set(cfg["calendar"].get("company_holidays") or [])
     holidays.update(h for h in (req.get("holidays") or []) if h)
 
-    H = max(7, min(120, int(req.get("horizon_days") or 28)))
+    H = max(7, min(MAX_HORIZON_DAYS, int(req.get("horizon_days") or 28)))
 
     requested = req.get("demand") or {}
     demand = {}
@@ -204,7 +205,8 @@ def _evaluate(cfg: dict, req: dict) -> dict:
     plan_inputs = None
     if req.get("use_planning_data"):
         from optimization import planning
-        plan_inputs = planning.load_inputs(grades, start, H, int(cfg.get("planning", {}).get("qc_days", 5)))
+        qc_days = int(cfg.get("planning", {}).get("qc_days", 5))
+        plan_inputs = planning.load_inputs(grades, start, H, qc_days, req.get("monthly_product_demand"))
         demand = planning.group_requirements(plan_inputs, grades)
 
     initial = req.get("initial") or {}

@@ -3,10 +3,12 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatNumber } from '@/lib/format';
-import { API_BASE_URL, getJson } from '@/lib/apiClient';
-import { DEMAND_DEFAULT, GRADES, SAMPLE_PLAN, dispOf } from './samplePlan';
+import { API_BASE_URL, describeFailure, getJson } from '@/lib/apiClient';
+import { formatApiDetail } from '@/lib/apiError';
+import { GRADES, SAMPLE_PLAN, dispOf } from './samplePlan';
 import { campaignStarts, cleaningAt, conflictCount, conflictDaysOf, draftFromResult, horizonOf, moveCleaning, resizeCampaign, type Draft, type Pair } from './manualPlan';
-import { HORIZON_MIN, MONTHS_MIN, TIME_LIMIT_MAX, OBJECTIVES, BASE_FORM, nextMondayIso, buildRequest, toIso, type PlanForm } from './planForm';
+import { HORIZON_MIN, MONTHS_MIN, TIME_LIMIT_MAX, OBJECTIVES, BASE_FORM, nextMondayIso, buildRequest, toIso, type PlanForm, type Preset } from './planForm';
+import { makeScenarioDemand, usePlanningDemand } from './usePlanningDemand';
 import type { CatalogGroup, OptimizeResult, PlanDay } from './types';
 
 // Gantt geometry (keep in sync with .opt-ghead / .opt-grow in optimize.css).
@@ -70,16 +72,18 @@ export function productLines(d: PlanDay, qcDays?: number, names?: Record<string,
 
 export function useOptimizePlan() {
   const [form, setForm] = useState<PlanForm>(BASE_FORM);
+  const demand = usePlanningDemand(form, setForm);
   // The bundled sample plan is on screen from the first paint; a real solve
   // (~6 s) waits for the planner to press Run optimization.
   const [data, setData] = useState<OptimizeResult | null>(SAMPLE_PLAN);
   const [shown, setShown] = useState<ShownResult | null>(null);
   const [phase, setPhase] = useState<Phase>('sample');
   const [solving, setSolving] = useState(false);
+  const [activeScenario, setActiveScenario] = useState<string | null>(null);
   const [problem, setProblem] = useState<SolveProblem | null>(null);
   const [manual, setManual] = useState<ManualState | null>(null);
   const [tip, setTip] = useState<TipState | null>(null);
-  /** groups with their products, for breaking demand down per product (null = not loaded) */
+  /** Product names for the schedule and stock projection. */
   const [catalog, setCatalog] = useState<CatalogGroup[] | null>(null);
 
   // Guards against a slow earlier solve overwriting a newer result
@@ -94,7 +98,7 @@ export function useOptimizePlan() {
   const unapplied = !!shown && shown.key !== currentKey;
   const showProblem = !!problem && problem.key === currentKey;
 
-  async function run(f: PlanForm = form) {
+  async function run(f: PlanForm = form, scenarioId: string | null = null) {
     const body = buildRequest(f);
     const key = JSON.stringify(body);
     const seq = ++runSeq.current;
@@ -109,7 +113,7 @@ export function useOptimizePlan() {
       if (!res.ok) {
         let detail = '';
         try {
-          detail = (await res.text()).slice(0, 300);
+          detail = formatApiDetail(await res.json(), res.status).slice(0, 300);
         } catch {
           detail = '';
         }
@@ -118,6 +122,7 @@ export function useOptimizePlan() {
           message: `The backend answered HTTP ${res.status}${detail ? ` — ${detail}` : ''}.`,
           key,
         });
+        if (res.status === 422) void demand.load();
         if (!data) {
           // First call already failed: show the bundled sample so the
           // page is usable, with the banner explaining the failure.
@@ -153,6 +158,7 @@ export function useOptimizePlan() {
       }
       setData(json);
       setShown({ key, form: f });
+      setActiveScenario(scenarioId);
       setProblem(null);
       setManual(null);
       setPhase('ok');
@@ -173,7 +179,7 @@ export function useOptimizePlan() {
   useEffect(() => {
     // Pick the start date on the client so SSR and the browser render the
     // same empty input; the backend would default to next Monday anyway.
-    const initial = { ...BASE_FORM, startDate: nextMondayIso(), demand: { ...DEMAND_DEFAULT } };
+    const initial = { ...BASE_FORM, startDate: nextMondayIso() };
     setForm(initial);
     // The sample stands in for a solved plan until Run optimization is
     // pressed; the shown key matches the form so no "inputs changed" chip
@@ -181,7 +187,7 @@ export function useOptimizePlan() {
     setShown({ key: JSON.stringify(buildRequest(initial)), form: initial });
     getJson<{ groups: CatalogGroup[] }>('/api/v1/optimize/catalog')
       .then((c) => setCatalog(c.groups))
-      .catch(() => setCatalog(null));   // offline or no product master: group fields only
+      .catch(() => setCatalog(null));   // report names still come from the solve response
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -194,20 +200,16 @@ export function useOptimizePlan() {
     run(next);
   }
 
-  function updateDemand(grade: string, raw: string) {
-    const num = Number(raw);
-    if (!Number.isFinite(num)) return;
-    setForm((prev) => ({ ...prev, demand: { ...prev.demand, [grade]: num } }));
-  }
-
-  /** '' clears the row; a group with no product above 0 goes back to its own field. */
-  function updateProductDemand(group: string, material: string, raw: string) {
-    const num = raw.trim() === '' ? 0 : Number(raw);
-    if (!Number.isFinite(num) || num < 0) return;
-    setForm((prev) => ({
-      ...prev,
-      productDemand: { ...prev.productDemand, [group]: { ...(prev.productDemand[group] ?? {}), [material]: num } },
-    }));
+  async function applyScenario(preset: Preset) {
+    setSolving(true);
+    try {
+      const next = await makeScenarioDemand(preset.apply(form));
+      setForm(next);
+      await run(next, preset.id);
+    } catch (err) {
+      setSolving(false);
+      setProblem({ status: 'error', message: describeFailure(err), key: currentKey });
+    }
   }
 
   function setHoliday(index: number, value: string) {
@@ -449,9 +451,9 @@ export function useOptimizePlan() {
     run,
     patch,
     applyAndRun,
-    updateDemand,
-    updateProductDemand,
-    catalog,
+    applyScenario,
+    activeScenario,
+    demand,
     productNames,
     setHoliday,
     removeHoliday,

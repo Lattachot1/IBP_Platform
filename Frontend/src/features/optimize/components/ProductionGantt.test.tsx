@@ -2,8 +2,6 @@
 import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { API_BASE_URL } from '@/lib/apiClient';
-
 import { SAMPLE_PLAN } from '../samplePlan';
 import { useOptimizePlan } from '../useOptimizePlan';
 import { ProductionGantt } from './ProductionGantt';
@@ -24,7 +22,8 @@ describe('product split in the Gantt', () => {
       days: [{ ...SAMPLE_PLAN.days[0], main_grade: 'VCR617', chg: true, cap: 190,
         parts: [{ grade: 'VCR617', tons: 190 }] }],
     };
-    fetchMock.mockImplementation(async () => new Response(JSON.stringify(view), { status: 200 }));
+    fetchMock.mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes('/product-demand-grid') ? [] : view)));
     const { result } = renderHook(() => useOptimizePlan());
     await act(() => result.current.run());
     const props = { plan: result.current, view: result.current.view! };
@@ -41,7 +40,8 @@ describe('product split in the Gantt', () => {
         ? { ...d, products: [{ material_no: '990101', tons: 161 }, { material_no: '990102', tons: 69 }] }
         : d)),
     };
-    fetchMock.mockImplementation(async () => new Response(JSON.stringify(withProducts), { status: 200 }));
+    fetchMock.mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes('/product-demand-grid') ? [] : withProducts)));
     const { result } = renderHook(() => useOptimizePlan());
     await act(() => result.current.run());
     await waitFor(() => expect(result.current.phase).toBe('ok'));
@@ -55,7 +55,8 @@ describe('product split in the Gantt', () => {
   });
 
   it('hides the toggle when the plan has no per-product output', async () => {
-    fetchMock.mockImplementation(async () => new Response(JSON.stringify({ ...SAMPLE_PLAN, mode: 'cspat' }), { status: 200 }));
+    fetchMock.mockImplementation(async (url: string) =>
+      new Response(JSON.stringify(url.includes('/product-demand-grid') ? [] : { ...SAMPLE_PLAN, mode: 'cspat' })));
     const { result } = renderHook(() => useOptimizePlan());
     await act(() => result.current.run());
     await waitFor(() => expect(result.current.phase).toBe('ok'));

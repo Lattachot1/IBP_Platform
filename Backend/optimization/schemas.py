@@ -5,6 +5,7 @@ the optimizer. They are stable across phases: the Phase 2 CP-SAT engine
 must fill exactly this response.
 """
 
+from datetime import date
 from typing import Annotated, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
@@ -12,6 +13,8 @@ from pydantic import BaseModel, Field
 # A grade's demand in tons (0 allowed); the values land in CP-SAT as integer
 # upper bounds, so a negative one would crash the model build — 422 instead.
 Tons = Annotated[float, Field(ge=0)]
+MonthlyTons = Annotated[float, Field(ge=0, allow_inf_nan=False)]
+MAX_HORIZON_DAYS = 190
 
 
 class InitialState(BaseModel):
@@ -24,7 +27,7 @@ class InitialState(BaseModel):
 
 
 class OptimizeRequest(BaseModel):
-    horizon_days: int = Field(default=28, ge=7, le=190)   # max fits 6 calendar months
+    horizon_days: int = Field(default=28, ge=7, le=MAX_HORIZON_DAYS)   # max fits 6 calendar months
     start_date: str = ""        # ISO date; "" = next Monday
     objective: str = "maximize_fulfilled"
     demand: Optional[Dict[str, Tons]] = None   # tons per grade; None = defaults
@@ -41,6 +44,9 @@ class OptimizeRequest(BaseModel):
     # each such group's demand becomes the sum of its products. Ignored with
     # use_planning_data. See optimization/product_split.py
     product_demand: Optional[Dict[str, Tons]] = None
+    # Month start -> material number -> total demand for this plan. Missing cells use
+    # actual orders only. None preserves the saved-forecast planning flow.
+    monthly_product_demand: Optional[Dict[date, Dict[str, MonthlyTons]]] = None
 
 
 # ---- hand-edited plan (editable Gantt) → POST /api/v1/optimize/evaluate ----
@@ -50,12 +56,12 @@ Pair = Literal["RX1-2", "RX3-4"]
 
 class ManualCampaign(BaseModel):
     grade: str
-    days: int = Field(ge=1, le=120)
+    days: int = Field(ge=1, le=MAX_HORIZON_DAYS)
 
 
 class ManualCleaning(BaseModel):
     pair: Pair
-    start: int = Field(ge=0, le=119)   # day index within the horizon
+    start: int = Field(ge=0, le=MAX_HORIZON_DAYS - 1)   # day index within the horizon
 
 
 class PairSegment(BaseModel):
@@ -64,8 +70,8 @@ class PairSegment(BaseModel):
     follows them through edits. A pair that is cleaning, or that would
     exceed its age limit, hands over to the other pair automatically."""
 
-    campaign: int = Field(ge=0, le=119)
-    offset: int = Field(default=0, ge=0, le=119)
+    campaign: int = Field(ge=0, le=MAX_HORIZON_DAYS - 1)
+    offset: int = Field(default=0, ge=0, le=MAX_HORIZON_DAYS - 1)
     pair: Pair
 
 

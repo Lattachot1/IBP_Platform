@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
-  BASE_FORM, MONTHS_MAX, MONTHS_MIN, PRESETS, buildRequest, groupDemand, groupUsesProducts,
+  BASE_FORM, MONTHS_MAX, MONTHS_MIN, PRESETS, buildRequest, demandError,
   monthHorizonDays, monthStartIso, nextMondayIso, scaleDemand,
 } from './planForm';
 import { DEMAND_DEFAULT } from './samplePlan';
@@ -16,12 +16,11 @@ describe('buildRequest', () => {
       horizon_days: 84,          // Nov 9 through Jan 31 (3 calendar months)
       start_date: '2026-11-09',
       objective: 'maximize_fulfilled',
-      demand: { BR150: 2600, BR150B: 1300, BR360B: 400, VCR412: 500, VCR617: 1000, BR150L: 900, BR150LGN: 0 },
       holidays: [],
       time_limit_s: 60,
       initial: { grade: 'BR150', remain_days: 2, rx12_age: 54, rx34_age: 0 },
-      use_planning_data: false,
-      product_demand: {},
+      use_planning_data: true,
+      monthly_product_demand: {},
     });
   });
 
@@ -33,30 +32,28 @@ describe('buildRequest', () => {
     expect(body.horizon_days).toBe(84);
   });
 
-  it('turns product rows into the group total and product_demand', () => {
-    const form = { ...BASE_FORM, productDemand: { BR150: { '990101': 900, '990102': 300, '990103': 0 } } };
-    const body = buildRequest(form);
-    expect(body.demand.BR150).toBe(1200);
-    expect(body.demand.VCR412).toBe(BASE_FORM.demand.VCR412);       // untouched group keeps its field
-    expect(body.product_demand).toEqual({ '990101': 900, '990102': 300 });
-    expect(groupUsesProducts(form, 'BR150')).toBe(true);
-    expect(groupDemand(form, 'BR150')).toBe(1200);
+  it('sends only explicit demand totals for the selected months', () => {
+    const body = buildRequest({
+      ...BASE_FORM,
+      months: 2,
+      startDate: '2026-11-09',
+      monthlyDemand: {
+        '2026-11-01': { '400003-ST,WS': '1920.4', '990102': '' },
+        '2026-12-01': { '990401': '0' },
+        '2027-01-01': { '400003-ST,WS': '2500' },
+      },
+    });
+    expect(body.monthly_product_demand).toEqual({
+      '2026-11-01': { '400003-ST,WS': 1920.4 },
+      '2026-12-01': { '990401': 0 },
+    });
   });
 
-  it('falls back to the group field when every product row is empty or 0', () => {
-    const form = { ...BASE_FORM, productDemand: { BR150: { '990101': 0 } } };
-    expect(groupUsesProducts(form, 'BR150')).toBe(false);
-    expect(buildRequest(form).demand.BR150).toBe(BASE_FORM.demand.BR150);
-    expect(buildRequest(form).product_demand).toEqual({});
-  });
-
-  it('sends no product demand when planning from the planning data', () => {
-    const form = { ...BASE_FORM, usePlanningData: true, productDemand: { BR150: { '990101': 900 } } };
-    expect(buildRequest(form).product_demand).toEqual({});
-  });
-
-  it('asks for the product-level plan when planning data is switched on', () => {
-    expect(buildRequest({ ...BASE_FORM, usePlanningData: true }).use_planning_data).toBe(true);
+  it('accepts a blank as the order total and rejects values below the floor', () => {
+    expect(demandError('', 120)).toBeNull();
+    expect(demandError('120', 120)).toBeNull();
+    expect(demandError('119.99', 120)).toContain('below actual orders');
+    expect(demandError('Infinity', 0)).toContain('non-negative');
   });
 
   it('clamps to the ranges the backend accepts (no 422 from the page)', () => {
@@ -80,20 +77,19 @@ describe('buildRequest', () => {
     expect(body.horizon_days).toBeGreaterThanOrEqual(7);
   });
 
-  it('drops blank holiday rows and sends 0 for invalid demand', () => {
+  it('drops blank holiday rows', () => {
     const body = buildRequest({
       ...BASE_FORM,
       holidays: ['2026-12-05', '', '2026-12-10'],
-      demand: { ...DEMAND_DEFAULT, BR150: -10, VCR412: Number.NaN },
     });
     expect(body.holidays).toEqual(['2026-12-05', '2026-12-10']);
-    expect(body.demand.BR150).toBe(0);
-    expect(body.demand.VCR412).toBe(0);
   });
 
   it('keeps the key order stable (the page compares requests as JSON strings)', () => {
-    const a = JSON.stringify(buildRequest({ ...BASE_FORM, demand: { BR150L: 900, ...DEMAND_DEFAULT } }));
-    const b = JSON.stringify(buildRequest(BASE_FORM));
+    const month = '2026-11-01';
+    const form = { ...BASE_FORM, startDate: month };
+    const a = JSON.stringify(buildRequest({ ...form, monthlyDemand: { [month]: { '990601': '900', '400003-ST,WS': '500' } } }));
+    const b = JSON.stringify(buildRequest({ ...form, monthlyDemand: { [month]: { '400003-ST,WS': '500', '990601': '900' } } }));
     expect(a).toBe(b);
   });
 });
@@ -136,7 +132,7 @@ describe('PRESETS', () => {
 
   it('reset the plan inputs but keep the calendar', () => {
     PRESETS.forEach((p) => {
-      const next = p.apply(current);
+      const { form: next } = p.apply(current);
       expect(next.startDate).toBe('2026-11-09');
       expect(next.holidays).toEqual(['2026-12-05']);
       expect(next.months).toBe(BASE_FORM.months);
@@ -145,9 +141,12 @@ describe('PRESETS', () => {
 
   it('set their own demand or plant state', () => {
     const byId = Object.fromEntries(PRESETS.map((p) => [p.id, p.apply(current)]));
-    expect(byId.surge.demand.BR150).toBe(3120);
-    expect(byId.vcr.demand).toMatchObject({ VCR412: 1500, VCR617: 2000 });
-    expect(byId.clean.rx12Age).toBe(58);
-    expect(byId.base.demand).toEqual(DEMAND_DEFAULT);
+    const total = (scenario: ReturnType<typeof PRESETS[number]["apply"]>, grade: string) => Object.values(scenario.gradeDemand)
+      .reduce((sum, month) => sum + Number(month[grade]), 0);
+    expect(total(byId.surge, 'BR150')).toBe(3120);
+    expect(total(byId.vcr, 'VCR412')).toBe(1500);
+    expect(total(byId.vcr, 'VCR617')).toBe(2000);
+    expect(byId.clean.form.rx12Age).toBe(58);
+    expect(total(byId.base, 'BR150')).toBe(DEMAND_DEFAULT.BR150);
   });
 });

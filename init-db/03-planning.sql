@@ -120,6 +120,12 @@ IF COL_LENGTH(N'dbo.SalesOrders', N'ShipTo') IS NULL
     ALTER TABLE dbo.SalesOrders ADD ShipTo NVARCHAR(20) NULL;
 GO
 
+-- Timed imports compare their source version with this value. Before this
+-- migration an order's only version was the date it was written to IBP.
+IF COL_LENGTH(N'dbo.SalesOrders', N'EffectiveUpdatedAt') IS NULL
+    ALTER TABLE dbo.SalesOrders ADD EffectiveUpdatedAt DATETIME2 NULL;
+GO
+
 -- Monthly forecast per product group. A 'manual' row (planner) overrides
 -- the 'engine' row (forecast engine) of the same group and month.
 IF OBJECT_ID(N'dbo.DemandForecasts', N'U') IS NULL

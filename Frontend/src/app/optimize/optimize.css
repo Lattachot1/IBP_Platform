@@ -168,13 +168,6 @@
   grid-template-columns: 1fr 1fr;
   gap: 8px;
 }
-.opt-demandrow {
-  display: grid;
-  grid-template-columns: 122px minmax(0, 1fr);
-  gap: 6px;
-  align-items: center;
-  margin-bottom: 6px;
-}
 .opt-gcode {
   font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
   font-size: 12px;
@@ -190,17 +183,6 @@
   border-radius: 3px;
   flex: none;
   display: inline-block;
-}
-.opt-demandrow input {
-  width: 100%;
-  min-width: 0;
-  text-align: right;     /* long numbers stay inside the box, never over the label */
-  background: var(--page);
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
-  font-variant-numeric: tabular-nums;
 }
 /* `.opt-root .opt-runbtn` beats the `.opt-root button { color: inherit }`
    reset above — without it the label renders ink-on-ink. */
@@ -977,8 +959,6 @@ table.opt-table td.wknd { color: var(--muted); }
 }
 
 /* ---- product-level planning (use_planning_data) ---- */
-.opt-sourcepick { display: grid; gap: 6px; font-size: 13px; }
-.opt-sourcepick label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .opt-railnote a { color: var(--s1); text-decoration: underline; }
 .opt-dayprod { font-size: 11px; color: var(--muted); margin-top: 2px; }
 .opt-subtle { font-size: 11px; color: var(--muted); }
@@ -1004,24 +984,8 @@ table.opt-table td.opt-empty { text-align: center; color: var(--muted); padding:
 .opt-spark-min { stroke: var(--bad); stroke-width: 1; stroke-dasharray: 3 3; }
 .opt-spark-zero { stroke: var(--baseline); stroke-width: 1; }
 
-/* ---- demand broken down per product ---- */
-.opt-expand {
-  width: 18px;
-  height: 18px;
-  border: 0;
-  background: none;
-  padding: 0;
-  cursor: pointer;
-  color: var(--ink2);
-  line-height: 1;
-}
-.opt-expand-gap { display: inline-block; width: 18px; }
-.opt-demandgroup.open { background: var(--surface2); border-radius: 6px; padding-bottom: 4px; margin-bottom: 4px; }
-.opt-prodrows { padding-left: 8px; }
-.opt-prodrow { font-size: 12px; }
-.opt-pcode, .opt-pname { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.opt-demandrow input.opt-sum { background: var(--surface2); color: var(--ink2); font-weight: 600; }
-.opt-prodnote { margin: 2px 8px 4px 0; }
+/* ---- product rows in fulfillment ---- */
+.opt-pname { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .opt-frow.opt-prodfrow { padding-left: 22px; font-size: 12px; }
 .opt-frow.opt-prodfrow .opt-ftrack { height: 6px; }
 

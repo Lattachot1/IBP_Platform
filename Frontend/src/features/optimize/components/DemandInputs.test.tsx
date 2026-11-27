@@ -1,85 +1,82 @@
 // @vitest-environment jsdom
 import { useState } from 'react';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { BASE_FORM, buildRequest, type PlanForm } from '../planForm';
+import { BASE_FORM, buildRequest } from '../planForm';
 import { GRADES } from '../samplePlan';
-import type { CatalogGroup, OptimizeResult } from '../types';
+import type { OptimizeResult } from '../types';
+import type { OptimizePlan } from '../useOptimizePlan';
+import { makeScenarioDemand, usePlanningDemand } from '../usePlanningDemand';
 import { DemandInputs } from './DemandInputs';
 import { FulfillmentPanel } from './FulfillmentPanel';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
-const catalog: CatalogGroup[] = GRADES.map((g) => ({
-  ...g,
-  products: g.id === 'BR150'
-    ? [{ material_no: '990101', description: 'UBEPOL BR150 MOCK-A', min_stock_tons: 300 },
-       { material_no: '990102', description: 'UBEPOL BR150 MOCK-B', min_stock_tons: 100 }]
-    : [],
-}));
+const rows = [
+  { material_no: '990101', description: 'Product A', group_code: 'BR150', is_active: true, months: [
+    { month: '2026-11-01', tons: 1200, ordered_tons: 1200, group_ordered_tons: 1920, forecast_share: 0.625 },
+    { month: '2026-12-01', tons: 922.88, ordered_tons: 800, group_ordered_tons: 1240, forecast_share: 0.6 },
+  ] },
+  { material_no: '990102', description: 'Product B', group_code: 'BR150', is_active: true, months: [
+    { month: '2026-11-01', tons: 720, ordered_tons: 720, group_ordered_tons: 1920, forecast_share: 0.375 },
+    { month: '2026-12-01', tons: 521.92, ordered_tons: 440, group_ordered_tons: 1240, forecast_share: 0.4 },
+  ] },
+];
+let latest: OptimizePlan;
 
-let latest: PlanForm = BASE_FORM;
-
-/** The same state updates as useOptimizePlan, on a plain form. */
-function Harness({ withCatalog = true }: { withCatalog?: boolean }) {
-  const [form, setForm] = useState<PlanForm>(BASE_FORM);
-  latest = form;
-  return (
-    <DemandInputs
-      form={form}
-      grades={GRADES}
-      catalog={withCatalog ? catalog : null}
-      updateDemand={(g, raw) => setForm((f) => ({ ...f, demand: { ...f.demand, [g]: Number(raw) } }))}
-      updateProductDemand={(g, m, raw) => setForm((f) => ({
-        ...f, productDemand: { ...f.productDemand, [g]: { ...(f.productDemand[g] ?? {}), [m]: raw === '' ? 0 : Number(raw) } },
-      }))}
-    />
-  );
+function Harness() {
+  const [form, setForm] = useState({ ...BASE_FORM, startDate: '2026-11-09', months: 2 });
+  const demand = usePlanningDemand(form, setForm);
+  latest = { form, grades: GRADES, solving: false, demand } as OptimizePlan;
+  return <DemandInputs plan={latest} />;
 }
 
-const groupInput = () => screen.getByLabelText('demand BR150') as HTMLInputElement;
-
-describe('DemandInputs', () => {
-  it('expands a group into its products and sums them', () => {
-    render(<Harness />);
-    expect(screen.queryByText('990101')).toBeNull();               // names only, no material codes
-    expect(screen.queryByLabelText('demand UBEPOL BR150 MOCK-A')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Show the products of BR150' }));
-    fireEvent.change(screen.getByLabelText('demand UBEPOL BR150 MOCK-A'), { target: { value: '900' } });
-    fireEvent.change(screen.getByLabelText('demand UBEPOL BR150 MOCK-B'), { target: { value: '300' } });
-    expect(groupInput().value).toBe('1200');
-    expect(groupInput().readOnly).toBe(true);
-    expect(screen.getByText(/BR150 = sum of its products \(1,200 t\)/)).toBeTruthy();
-    expect(buildRequest(latest).product_demand).toEqual({ '990101': 900, '990102': 300 });
-    expect(buildRequest(latest).demand.BR150).toBe(1200);
+describe('Monthly demand inputs', () => {
+  it('uses the weight of each month when converting demo demand to products', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify(rows))));
+    const form = { ...BASE_FORM, startDate: '2026-11-09', months: 2 };
+    const next = await makeScenarioDemand({
+      form,
+      gradeDemand: { '2026-11-01': { BR150: '2080' }, '2026-12-01': { BR150: '1340' } },
+    });
+    expect(buildRequest(next).monthly_product_demand).toEqual({
+      '2026-11-01': { '990101': 1300, '990102': 780 },
+      '2026-12-01': { '990101': 860, '990102': 480 },
+    });
   });
 
-  it('gives the group field back once the product rows are cleared', () => {
+  it('starts with actual orders and loads forecast totals at or above the floor', async () => {
+    const fetchMock = vi.fn(async (_url: string, _init: RequestInit) => new Response(JSON.stringify(rows)));
+    vi.stubGlobal('fetch', fetchMock);
     render(<Harness />);
-    fireEvent.click(screen.getByRole('button', { name: 'Show the products of BR150' }));
-    fireEvent.change(screen.getByLabelText('demand UBEPOL BR150 MOCK-A'), { target: { value: '900' } });
-    fireEvent.change(screen.getByLabelText('demand UBEPOL BR150 MOCK-A'), { target: { value: '' } });
-    expect(groupInput().readOnly).toBe(false);
-    expect(groupInput().value).toBe(String(BASE_FORM.demand.BR150));
-  });
+    const november = await screen.findByLabelText('Demand Product A 2026-11') as HTMLInputElement;
+    const december = screen.getByLabelText('Demand Product A 2026-12') as HTMLInputElement;
 
-  it('keeps product rows open across collapse and offers no expander without products', () => {
-    render(<Harness />);
-    expect(screen.queryByRole('button', { name: /products of VCR-412/ })).toBeNull();
-    const toggle = screen.getByRole('button', { name: 'Show the products of BR150' });
-    fireEvent.click(toggle);
-    fireEvent.change(screen.getByLabelText('demand UBEPOL BR150 MOCK-B'), { target: { value: '50' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Hide the products of BR150' }));
-    expect(screen.queryByLabelText('demand UBEPOL BR150 MOCK-B')).toBeNull();
-    expect(groupInput().value).toBe('50');           // still the sum while collapsed
-  });
+    await waitFor(() => expect(november.value).toBe('1200'));
+    expect(december.value).toBe('800');
+    expect(buildRequest(latest.form).monthly_product_demand).toEqual({});
+    expect(screen.queryByRole('radio')).toBeNull();
 
-  it('works as plain group fields without a product master', () => {
-    render(<Harness withCatalog={false} />);
-    expect(screen.queryByRole('button', { name: /Show the products/ })).toBeNull();
-    fireEvent.change(groupInput(), { target: { value: '777' } });
-    expect(buildRequest(latest).demand.BR150).toBe(777);
+    fireEvent.click(screen.getByRole('button', { name: 'Load from Planning Data' }));
+    await waitFor(() => expect(december.value).toBe('922.88'));
+    expect(november.value).toBe('1200');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toContain('/api/v1/product-demand-grid?start_month=2026-11&months=2');
+
+    fireEvent.change(december, { target: { value: '900' } });
+    expect(latest.demand.invalid).toBe(false);
+    expect(buildRequest(latest.form).monthly_product_demand['2026-12-01']).toEqual({ '990101': 900, '990102': 521.92 });
+    fireEvent.change(december, { target: { value: '799' } });
+    expect(latest.demand.invalid).toBe(true);
+    expect(december.getAttribute('aria-invalid')).toBe('true');
+    fireEvent.change(december, { target: { value: '' } });
+    expect(latest.demand.invalid).toBe(false);
+    expect(buildRequest(latest.form).monthly_product_demand['2026-12-01']).toEqual({ '990102': 521.92 });
+    expect(fetchMock.mock.calls.every((call) => call[1]?.method === 'GET')).toBe(true);
   });
 });
 

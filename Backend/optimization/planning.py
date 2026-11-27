@@ -27,13 +27,17 @@ the horizon only serves the forecast tier.
 Forecast tier: per month touching the horizon, the group forecast
 ('manual' overrides 'engine') minus every order due that month (shipped
 or open) is the demand not ordered yet. It is split over the group's
-products by their share of the group's order tons, prorated when the
-month runs past the horizon, and must be produced (not yet QC-released)
+active products by their share of that month's order tons, falling back to
+prior months, then an equal split. It is prorated when the month runs past
+the horizon and must be produced (not yet QC-released)
 by the month end on top of the open orders and the minimum stock: stock
-above that counts against it, product by product.
+above that counts against it, product by product. For an explicit product
+plan, the product's own target minus its orders is used as its monthly
+requirement directly.
 """
 
 import calendar
+from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Dict, List, Optional
@@ -46,6 +50,10 @@ W_OUTPUT = 1            # per ton produced (keep the plant loaded once all tiers
 STALE_STOCK_DAYS = 7
 
 
+class MonthlyDemandError(ValueError):
+    """A plan's monthly demand does not match its scope or latest orders."""
+
+
 def _t(value: float) -> int:
     return int(round(value))
 
@@ -56,7 +64,7 @@ class ProductInput:
     description: str
     group: str
     min_stock: float
-    share: float                                   # of the group's not-yet-ordered forecast
+    share: float                                   # order mix for splitting a hand-edited schedule
     start_stock: float
     receipts: Dict[int, float] = field(default_factory=dict)   # day index -> QC release tons
     demand: Dict[int, float] = field(default_factory=dict)     # day index -> open order tons due
@@ -84,6 +92,7 @@ class MonthInput:
     remainder: float
     fraction: float
     deadline: int           # day index of min(month end, horizon end)
+    material_no: Optional[str] = None  # explicit demand for one product
 
 
 @dataclass
@@ -118,8 +127,98 @@ def _effective_forecasts(forecasts) -> Dict[tuple, tuple]:
     return out
 
 
+@dataclass
+class OrderMix:
+    product_tons: Dict[tuple, float]
+    group_tons: Dict[tuple, float]
+    active_by_group: Dict[str, List[str]]
+    production_shares: Dict[str, float]
+
+    def forecast_shares(self, month: date) -> Dict[str, float]:
+        """Use the target month's mix, then earlier months, then equal shares."""
+        history = defaultdict(float)
+        for (material, due_month), tons in self.product_tons.items():
+            if due_month < month:
+                history[material] += tons
+
+        shares = {}
+        for materials in self.active_by_group.values():
+            weights = [self.product_tons.get((material, month), 0.0) for material in materials]
+            if not sum(weights):
+                weights = [history[material] for material in materials]
+            total = sum(weights)
+            for material, weight in zip(materials, weights):
+                shares[material] = weight / total if total else 1.0 / len(materials)
+        return shares
+
+
+def _order_totals(products, orders) -> OrderMix:
+    """Summarize non-cancelled order tons and eligible products."""
+    group_of = {p.material_no: p.group_code for p in products}
+    ordered_by_product = defaultdict(float)
+    ordered_by_group = defaultdict(float)
+    lifetime_tons = defaultdict(float)
+    for order in orders:
+        group = group_of.get(order.material_no)
+        if group is None or order.status == "cancelled":
+            continue
+        month = order.due_date.replace(day=1)
+        ordered_by_product[order.material_no, month] += order.tons
+        ordered_by_group[group, month] += order.tons
+        lifetime_tons[order.material_no] += order.tons
+
+    active_by_group = defaultdict(list)
+    for product in products:
+        if product.is_active:
+            active_by_group[product.group_code].append(product.material_no)
+    production_shares = {}
+    for materials in active_by_group.values():
+        total = sum(lifetime_tons[material] for material in materials)
+        for material in materials:
+            production_shares[material] = lifetime_tons[material] / total if total else 1.0 / len(materials)
+    return OrderMix(ordered_by_product, ordered_by_group, active_by_group, production_shares)
+
+
+def product_demand_grid(groups, products, orders, forecasts, months):
+    """Break stored group forecasts into editable product totals for the requested months."""
+    products = sorted((p for p in products if p.group_code in groups),
+                      key=lambda p: (p.group_code, p.description.casefold(), p.material_no))
+    order_mix = _order_totals(products, orders)
+    shares_by_month = {month: order_mix.forecast_shares(month) for month in months}
+    effective = _effective_forecasts(forecasts)
+    group_share = defaultdict(float)
+    end = _month_end(months[-1])
+    open_materials = {o.material_no for o in orders if o.status == "open" and o.open_tons > 0 and o.due_date <= end}
+    rows = []
+    for product in products:
+        material, group = product.material_no, product.group_code
+        if not product.is_active and material not in open_materials:
+            continue
+        cells = []
+        for month in months:
+            share = shares_by_month[month].get(material, 0.0)
+            key = (group, month)
+            start_share = group_share[key]
+            end_share = start_share + share
+            group_share[key] = end_share
+            floor = order_mix.product_tons.get((material, month), 0.0)
+            group_floor = order_mix.group_tons.get(key, 0.0)
+            forecast = effective.get((group, month))
+            total = None
+            if forecast is not None and product.is_active:
+                extra = max(0.0, forecast[0] - group_floor)
+                # Round cumulative shares so the product extras still sum to the group extra.
+                total = round(floor + round(extra * end_share, 3) - round(extra * start_share, 3), 3)
+            cells.append({"month": month, "ordered_tons": floor, "group_ordered_tons": group_floor,
+                          "forecast_share": share, "tons": total})
+        rows.append({"material_no": material, "description": product.description, "group_code": group,
+                     "is_active": product.is_active, "months": cells})
+    return rows
+
+
 def build_inputs(groups: List[str], products, snapshot, lots, orders, forecasts,
-                 start: date, horizon: int, qc_days: int) -> PlanInputs:
+                 start: date, horizon: int, qc_days: int,
+                 monthly_product_demand: Optional[Dict[date, Dict[str, float]]] = None) -> PlanInputs:
     """Pure function: planning data records -> per-product model inputs."""
     end = start + timedelta(days=horizon - 1)
     warnings: List[str] = []
@@ -177,30 +276,29 @@ def build_inputs(groups: List[str], products, snapshot, lots, orders, forecasts,
             demand.setdefault(o.material_no, {})
             demand[o.material_no][index] = demand[o.material_no].get(index, 0.0) + o.open_tons
 
-    # product shares of each group (order tons, any status but cancelled)
-    group_of = {p.material_no: p.group_code for p in products if p.group_code in groups}
-    tons_by_product: Dict[str, float] = {}
-    for o in orders:
-        if o.status != "cancelled" and o.material_no in group_of:
-            tons_by_product[o.material_no] = tons_by_product.get(o.material_no, 0.0) + o.tons
-    shares: Dict[str, float] = {}
-    for g in groups:
-        members = [p for p in planned if p.group_code == g and p.is_active]
-        if not members:
-            continue
-        total = sum(tons_by_product.get(p.material_no, 0.0) for p in members)
-        for p in members:
-            shares[p.material_no] = (tons_by_product.get(p.material_no, 0.0) / total) if total else 1.0 / len(members)
+    eligible = [p for p in products if p.group_code in groups]
+    order_mix = _order_totals(eligible, orders)
+    active = {p.material_no: p for p in eligible if p.is_active}
+    if monthly_product_demand is not None:
+        for month, targets in monthly_product_demand.items():
+            if month.day != 1 or not start.replace(day=1) <= month <= end:
+                raise MonthlyDemandError(f"Monthly demand must use a month start within the plan: {month}")
+            for material, tons in targets.items():
+                if material not in active:
+                    raise MonthlyDemandError(f"Product is inactive or unavailable for monthly demand: {material}")
+                floor = order_mix.product_tons.get((material, month), 0.0)
+                if tons < floor - 1e-9:
+                    raise MonthlyDemandError(
+                        f"{active[material].description} ({material}) {month:%Y-%m}: "
+                        f"demand cannot go below the latest order total ({floor:g} t)."
+                    )
 
-    # forecast still to produce, per group and month touching the horizon
-    effective = _effective_forecasts(forecasts)
-    ordered: Dict[tuple, float] = {}
-    for o in orders:
-        if o.status != "cancelled" and o.material_no in group_of:
-            key = (group_of[o.material_no], o.due_date.replace(day=1))
-            ordered[key] = ordered.get(key, 0.0) + o.tons
+    effective = _effective_forecasts(forecasts) if monthly_product_demand is None else {}
+    forecast_months = {month for _, month in effective}
+    shares_by_month = {month: order_mix.forecast_shares(month) for month in forecast_months}
     months: List[MonthInput] = []
-    lookahead: Dict[str, float] = {}          # group -> not-yet-ordered tons just after the horizon
+    lookahead: Dict[tuple, float] = {}          # (group, month) -> tons just after the horizon
+    product_lookahead: Dict[str, float] = defaultdict(float)
     first = start.replace(day=1)
     while first <= end:
         last = _month_end(first)
@@ -211,40 +309,57 @@ def build_inputs(groups: List[str], products, snapshot, lots, orders, forecasts,
             if (g, first) not in effective:
                 continue
             tons, source = effective[(g, first)]
-            used = ordered.get((g, first), 0.0)
+            used = order_mix.group_tons.get((g, first), 0.0)
             remainder = max(0.0, tons - used)
             months.append(MonthInput(g, first, tons, source, used, remainder, fraction, (to_day - start).days))
-            lookahead[g] = lookahead.get(g, 0.0) + remainder * (1.0 - fraction)
+            lookahead[g, first] = remainder * (1.0 - fraction)
+        for material, tons in (monthly_product_demand or {}).get(first, {}).items():
+            used = order_mix.product_tons.get((material, first), 0.0)
+            remainder = max(0.0, tons - used)
+            months.append(MonthInput(active[material].group_code, first, tons, "plan", used, remainder,
+                                     fraction, (to_day - start).days, material))
+            product_lookahead[material] += remainder * (1.0 - fraction)
         first = last + timedelta(days=1)
     if not any(mi.fraction < 1 for mi in months):
         # the horizon ends on a month end: look ahead to the whole next month
         for g in groups:
             if (g, first) in effective:
                 tons, _ = effective[(g, first)]
-                lookahead[g] = lookahead.get(g, 0.0) + max(0.0, tons - ordered.get((g, first), 0.0))
+                lookahead[g, first] = max(0.0, tons - order_mix.group_tons.get((g, first), 0.0))
 
     product_inputs = []
     for p in sorted(planned, key=lambda p: (p.group_code, p.material_no)):
         expected: Dict[int, float] = {}
         for mi in months:
-            if mi.group == p.group_code and p.material_no in shares:
-                expected[mi.deadline] = expected.get(mi.deadline, 0.0) + mi.remainder * mi.fraction * shares[p.material_no]
+            if mi.material_no == p.material_no:
+                allocation = mi.remainder * mi.fraction
+            elif mi.material_no is None and mi.group == p.group_code:
+                share = shares_by_month[mi.month].get(p.material_no, 0.0)
+                allocation = mi.remainder * mi.fraction * share
+            else:
+                continue
+            if allocation > 0:
+                expected[mi.deadline] = expected.get(mi.deadline, 0.0) + allocation
         product_inputs.append(ProductInput(
             material_no=p.material_no,
             description=p.description,
             group=p.group_code,
             min_stock=p.min_stock_tons if p.is_active else 0.0,
-            share=shares.get(p.material_no, 0.0),
+            share=order_mix.production_shares.get(p.material_no, 0.0),
             start_stock=stock.get(p.material_no, 0.0),
             receipts=receipts.get(p.material_no, {}),
             demand=demand.get(p.material_no, {}),
             expected=expected,
-            lookahead=lookahead.get(p.group_code, 0.0) * shares.get(p.material_no, 0.0),
+            lookahead=product_lookahead[p.material_no] + sum(
+                tons * shares_by_month[month].get(p.material_no, 0.0)
+                for (group, month), tons in lookahead.items() if group == p.group_code
+            ),
         ))
     return PlanInputs(start, horizon, qc_days, snapshot_date, product_inputs, order_inputs, months, warnings)
 
 
-def load_inputs(groups: List[str], start: date, horizon: int, qc_days: int) -> PlanInputs:
+def load_inputs(groups: List[str], start: date, horizon: int, qc_days: int,
+                monthly_product_demand: Optional[Dict[date, Dict[str, float]]] = None) -> PlanInputs:
     """Read the planning data (database or memory) for a plan starting on `start`.
 
     Raises planning_data.sql.StoreUnavailable when the database is down.
@@ -259,8 +374,8 @@ def load_inputs(groups: List[str], start: date, horizon: int, qc_days: int) -> P
         planning.stock_snapshot(start),
         planning.qc_lots(),
         planning.sales_orders(),
-        planning.forecasts(start.replace(day=1), start + timedelta(days=horizon)),
-        start, horizon, qc_days,
+        planning.forecasts(start.replace(day=1), start + timedelta(days=horizon)) if monthly_product_demand is None else [],
+        start, horizon, qc_days, monthly_product_demand,
     )
 
 
@@ -523,19 +638,29 @@ def report(plan: PlanModel, value, dates: List[date]) -> dict:
             })
     orders_out.sort(key=lambda o: (o["due_date"], o["order_no"], o["item_no"]))
 
-    # forecast tier per group and month
-    short_at: Dict[tuple, float] = {}
+    # Forecast coverage has both legacy group rows and explicit product rows.
+    short_at = defaultdict(float)
+    product_short_at = defaultdict(float)
     for pv in plan.products:
         for deadline, var, _ in pv.forecast_short:
-            key = (pv.product.group, deadline)
-            short_at[key] = short_at.get(key, 0.0) + value(var)
+            short_at[pv.product.group, deadline] += value(var)
+            product_short_at[pv.product.material_no, deadline] += value(var)
+    groups_with_forecast_products = {p.group for p in inputs.products if p.share > 0}
+    def shortage(mi):
+        if mi.material_no is not None:
+            return product_short_at[mi.material_no, mi.deadline]
+        if mi.group in groups_with_forecast_products:
+            return short_at[mi.group, mi.deadline]
+        return mi.remainder * mi.fraction
+
     forecast_out = [{
+        **({"material_no": mi.material_no} if mi.material_no is not None else {}),
         "group": mi.group, "month": mi.month.strftime("%Y-%m"), "source": mi.source,
         "forecast": round(mi.forecast, 1), "ordered": round(mi.ordered, 1),
         "not_yet_ordered": round(mi.remainder, 1), "share_in_horizon": round(mi.fraction, 3),
         "to_produce": round(mi.remainder * mi.fraction, 1),
         "deadline": dates[mi.deadline].isoformat(),
-        "short_tons": round(short_at.get((mi.group, mi.deadline), 0.0), 1),
+        "short_tons": round(shortage(mi), 1),
     } for mi in inputs.months]
 
     in_horizon = [o for o in orders_out if o["in_horizon"]]
@@ -610,9 +735,9 @@ def checks(section: dict) -> List[dict]:
     short = [f for f in section["forecast"] if f["short_tons"] > 0]
     if short:
         out.append({"level": "warn", "text": "Forecast not fully produced: " + ", ".join(
-            "%s %s short %d t" % (f["group"], f["month"], f["short_tons"]) for f in short)})
+            "%s %s short %g t" % (f.get("material_no", f["group"]), f["month"], f["short_tons"]) for f in short)})
     elif section["forecast"]:
-        out.append({"level": "ok", "text": "Forecast still to produce is covered for every group and month"})
+        out.append({"level": "ok", "text": "Monthly demand above actual orders is covered"})
     unallocated = section.get("unallocated_tons") or {}
     if unallocated:
         out.append({"level": "warn", "text": "Output of groups with no products in the product master: " + ", ".join(

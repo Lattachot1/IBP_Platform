@@ -2,7 +2,7 @@
 // (POST /api/v1/optimize). Pure functions - no React.
 
 import { clamp } from '@/lib/format';
-import { DEMAND_DEFAULT, GRADES } from './samplePlan';
+import { DEMAND_DEFAULT } from './samplePlan';
 
 // Bounds mirror OptimizeRequest in Backend/optimization/schemas.py so the
 // page never sends a request the backend would reject with 422.
@@ -13,7 +13,10 @@ export const MONTHS_MAX = 6;
 export const TIME_LIMIT_MIN = 5;
 export const TIME_LIMIT_MAX = 300;
 
-/** Every input the planner can edit — one field per OptimizeRequest field. */
+/** ISO month start -> material number -> editable demand total in tons. */
+export type MonthlyDemand = Record<string, Record<string, string>>;
+
+/** The inputs the planner can edit. */
 export interface PlanForm {
   /** calendar months the plan spans; the horizon always ends on a month end */
   months: number;
@@ -25,11 +28,7 @@ export interface PlanForm {
   rx12Age: number;
   rx34Age: number;
   timeLimitS: number;
-  demand: Record<string, number>;
-  /** plan per product from the planning data instead of `demand` */
-  usePlanningData: boolean;
-  /** group -> material -> tons; a group with any product above 0 takes their sum */
-  productDemand: Record<string, Record<string, number>>;
+  monthlyDemand: MonthlyDemand;
 }
 
 // Changeover penalty per objective (tons-equivalent per changeover day),
@@ -50,9 +49,7 @@ export const BASE_FORM: PlanForm = {
   rx12Age: 54,
   rx34Age: 0,
   timeLimitS: 60,
-  demand: { ...DEMAND_DEFAULT },
-  usePlanningData: false,
-  productDemand: {},
+  monthlyDemand: {},
 };
 
 export function toIso(d: Date): string {
@@ -100,39 +97,36 @@ export function scaleDemand(base: Record<string, number>, factor: number): Recor
   return out;
 }
 
-const validTons = (v: number | undefined) => (v !== undefined && Number.isFinite(v) && v >= 0 ? v : 0);
-
-/** The product rows of a group that carry demand (tons above 0). */
-export function productRows(f: PlanForm, group: string): [string, number][] {
-  return Object.entries(f.productDemand[group] ?? {}).filter(([, v]) => validTons(v) > 0);
+export function demandMonths(f: PlanForm): string[] {
+  const start = planStartIso(f);
+  return Array.from({ length: clamp(f.months, MONTHS_MIN, MONTHS_MAX) }, (_, i) => monthStartIso(start, i));
 }
 
-/** True when the group's demand is the sum of its products. */
-export function groupUsesProducts(f: PlanForm, group: string): boolean {
-  return productRows(f, group).length > 0;
-}
-
-/** Demand of a group: the sum of its products when it has any, else the group field. */
-export function groupDemand(f: PlanForm, group: string): number {
-  const rows = productRows(f, group);
-  return rows.length ? rows.reduce((sum, [, v]) => sum + v, 0) : validTons(f.demand[group]);
+export function demandError(raw: string, floor: number): string | null {
+  if (raw.trim() === '') return null;
+  const tons = Number(raw);
+  if (!Number.isFinite(tons) || tons < 0) return 'Enter a non-negative number of tons.';
+  if (tons < floor - 1e-9) return 'Demand is below actual orders.';
+  return null;
 }
 
 /** The exact JSON body for POST /api/v1/optimize (stable key order). */
 export function buildRequest(f: PlanForm) {
-  const demand: Record<string, number> = {};
-  const productDemand: Record<string, number> = {};
-  GRADES.forEach((g) => {
-    demand[g.id] = groupDemand(f, g.id);
-    if (!f.usePlanningData) productRows(f, g.id).forEach(([material, v]) => (productDemand[material] = v));
-  });
-  const months = clamp(f.months, MONTHS_MIN, MONTHS_MAX);
+  const monthlyDemand: Record<string, Record<string, number>> = {};
+  const months = demandMonths(f);
   const start = planStartIso(f);
+  for (const month of months) {
+    const values = Object.entries(f.monthlyDemand[month] ?? {})
+      .filter(([, value]) => value.trim() !== '')
+      .sort(([material], [otherMaterial]) => material.localeCompare(otherMaterial));
+    if (values.length) {
+      monthlyDemand[month] = Object.fromEntries(values.map(([material, value]) => [material, Number(value)]));
+    }
+  }
   return {
-    horizon_days: clamp(monthHorizonDays(start, months), HORIZON_MIN, HORIZON_MAX),
+    horizon_days: clamp(monthHorizonDays(start, months.length), HORIZON_MIN, HORIZON_MAX),
     start_date: start,
     objective: f.objective,
-    demand,
     holidays: f.holidays.filter(Boolean),
     time_limit_s: clamp(f.timeLimitS, TIME_LIMIT_MIN, TIME_LIMIT_MAX),
     initial: {
@@ -141,48 +135,63 @@ export function buildRequest(f: PlanForm) {
       rx12_age: clamp(f.rx12Age, 0, 365),
       rx34_age: clamp(f.rx34Age, 0, 365),
     },
-    use_planning_data: f.usePlanningData,
-    product_demand: productDemand,
+    use_planning_data: true,
+    monthly_product_demand: monthlyDemand,
   };
+}
+
+export interface DemoScenario {
+  form: PlanForm;
+  gradeDemand: MonthlyDemand;
 }
 
 export interface Preset {
   id: string;
   label: string;
   hint: string;
-  apply: (current: PlanForm) => PlanForm;
+  apply: (current: PlanForm) => DemoScenario;
 }
 
-// Quick scenarios: each resets the plan inputs but keeps the calendar
-// (start date + holidays) the planner already set.
+// Spread a demo scenario's horizon totals over its three calendar months.
+function demoScenario(current: PlanForm, totals = DEMAND_DEFAULT): DemoScenario {
+  const next = { ...BASE_FORM, startDate: current.startDate, holidays: current.holidays };
+  const months = demandMonths(next);
+  const gradeDemand = Object.fromEntries(months.map((month, i) => [
+    month,
+    Object.fromEntries(Object.entries(totals).map(([grade, tons]) => [
+      grade,
+      String(Math.floor(tons / months.length) + Number(i < tons % months.length)),
+    ])),
+  ]));
+  return { form: next, gradeDemand };
+}
+
 export const PRESETS: Preset[] = [
   {
     id: 'base',
     label: 'Base',
     hint: 'Demo demand, 3 months, RX1-2 at age 54',
-    apply: (c) => ({ ...BASE_FORM, startDate: c.startDate, holidays: c.holidays, demand: { ...DEMAND_DEFAULT } }),
+    apply: (c) => demoScenario(c),
   },
   {
     id: 'surge',
     label: 'Demand +20%',
-    hint: 'Every grade +20% — expect shortages on the low-capacity grades',
-    apply: (c) => ({ ...BASE_FORM, startDate: c.startDate, holidays: c.holidays, demand: scaleDemand(DEMAND_DEFAULT, 1.2) }),
+    hint: 'Every demo grade +20%',
+    apply: (c) => demoScenario(c, scaleDemand(DEMAND_DEFAULT, 1.2)),
   },
   {
     id: 'vcr',
     label: 'Heavy VCR',
-    hint: 'VCR-412 1,500 t and VCR-617 2,000 t — forces a long VCR campaign on all four reactors',
-    apply: (c) => ({
-      ...BASE_FORM,
-      startDate: c.startDate,
-      holidays: c.holidays,
-      demand: { ...DEMAND_DEFAULT, VCR412: 1500, VCR617: 2000 },
-    }),
+    hint: 'VCR-412 1,500 t and VCR-617 2,000 t over the plan',
+    apply: (c) => demoScenario(c, { ...DEMAND_DEFAULT, VCR412: 1500, VCR617: 2000 }),
   },
   {
     id: 'clean',
     label: 'RX1-2 near cleaning',
     hint: 'RX1-2 already at age 58 — the 7-day cleaning is due within two days',
-    apply: (c) => ({ ...BASE_FORM, startDate: c.startDate, holidays: c.holidays, demand: { ...DEMAND_DEFAULT }, rx12Age: 58 }),
+    apply: (c) => {
+      const scenario = demoScenario(c);
+      return { ...scenario, form: { ...scenario.form, rx12Age: 58 } };
+    },
   },
 ];

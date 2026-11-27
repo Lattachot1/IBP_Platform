@@ -7,13 +7,15 @@ import { formatNumber } from '@/lib/format';
 import { publishEngineForecast, publishSaleForecast } from '../api';
 import { applyFilterSort, figuresOf, nextSort } from '../productTable';
 import type { ProductSort, ProductSortColumn } from '../productTable';
-import type { Product, ProductGroup } from '../types';
+import type { Product, ProductGroup, SalesOrder } from '../types';
+import { SalesOrderEditor } from './SalesOrderEditor';
 import type { PlanningViewsState, ProductMasterState } from '../usePlanningData';
 
 const input = 'px-2 py-1 rounded-md border border-slate-300 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-500';
 const button = 'px-2.5 py-1 rounded-md text-xs font-semibold border transition-colors disabled:opacity-50';
 const th = 'py-2 px-3';
 const td = 'py-1.5 px-3';
+const orderTons = new Intl.NumberFormat('en-US', { maximumFractionDigits: 3 });
 
 interface Draft {
   description: string;
@@ -128,6 +130,7 @@ function MiniTable({ caption, head, children, empty }: {
 /** The expanded row: this product's QC lots, sales orders and its group's forecast,
  * each in the order the planner reads them (earliest need first). */
 function DetailRow({ p, master, views }: { p: Product; master: ProductMasterState; views: PlanningViewsState }) {
+  const [editingOrder, setEditingOrder] = useState<SalesOrder | null>(null);
   const lots = [...views.lots.filter((l) => l.material_no === p.material_no)]
     .sort((a, b) => a.release_date.localeCompare(b.release_date) || a.lot_no.localeCompare(b.lot_no));
   const orders = [...views.orders.filter((o) => o.material_no === p.material_no)]
@@ -138,7 +141,36 @@ function DetailRow({ p, master, views }: { p: Product; master: ProductMasterStat
   return (
     <tr className="bg-slate-50/60">
       <td colSpan={11} className="py-3 px-6">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-3">
+          <div className="xl:col-span-2">
+            <MiniTable caption="Sales orders" empty="No sales orders for this product" head={
+              <tr><th className={th}>Order / item</th><th className={th}>Ship to</th><th className={`${th} text-right`}>Ordered (t)</th><th className={`${th} text-right`}>Open (t)</th><th className={th}>Due</th><th className={th}>Status</th><th className={th}>Updated</th><th className={th}>Action</th></tr>
+            }>
+              {orders.map((o) => (
+                <tr key={`${o.order_no}/${o.item_no}`}>
+                  <td className={`${td} font-mono`}>{o.order_no}/{o.item_no}</td>
+                  <td className={`${td} font-mono`}>{o.ship_to ?? '—'}</td>
+                  <td className={`${td} text-right font-mono`}>{orderTons.format(o.tons)}</td>
+                  <td className={`${td} text-right font-mono font-semibold`}>{orderTons.format(o.open_tons)}</td>
+                  <td className={td}>{o.due_date}</td>
+                  <td className={td}><Status value={o.status} /></td>
+                  <td className={td} title={o.updated_at ?? undefined}>
+                    {o.updated_at ? new Date(o.updated_at).toLocaleString('en-GB', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
+                  </td>
+                  <td className={td}>
+                    <button type="button" className={`${button} border-slate-300 bg-white hover:bg-slate-50`}
+                      aria-label={`Edit sales order ${o.order_no}/${o.item_no}`}
+                      disabled={editingOrder !== null} onClick={() => setEditingOrder(o)}>
+                      Edit
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </MiniTable>
+            {editingOrder && (
+              <SalesOrderEditor order={editingOrder} save={views.saveSalesOrder} close={() => setEditingOrder(null)} />
+            )}
+          </div>
           <MiniTable caption="QC lots" empty="No QC lots for this product" head={
             <tr><th className={th}>Lot</th><th className={`${th} text-right`}>Tons</th><th className={th}>Produced</th><th className={th}>Release</th><th className={th}>Status</th></tr>
           }>
@@ -149,20 +181,6 @@ function DetailRow({ p, master, views }: { p: Product; master: ProductMasterStat
                 <td className={td}>{l.produced_date}</td>
                 <td className={td}>{l.release_date}</td>
                 <td className={td}><Status value={l.status} /></td>
-              </tr>
-            ))}
-          </MiniTable>
-          <MiniTable caption="Sales orders" empty="No sales orders for this product" head={
-            <tr><th className={th}>Order / item</th><th className={th}>Ship to</th><th className={`${th} text-right`}>Ordered (t)</th><th className={`${th} text-right`}>Open (t)</th><th className={th}>Due</th><th className={th}>Status</th></tr>
-          }>
-            {orders.map((o) => (
-              <tr key={`${o.order_no}/${o.item_no}`}>
-                <td className={`${td} font-mono`}>{o.order_no}/{o.item_no}</td>
-                <td className={`${td} font-mono`}>{o.ship_to ?? '—'}</td>
-                <td className={`${td} text-right font-mono`}>{formatNumber(o.tons)}</td>
-                <td className={`${td} text-right font-mono font-semibold`}>{formatNumber(o.open_tons)}</td>
-                <td className={td}>{o.due_date}</td>
-                <td className={td}><Status value={o.status} /></td>
               </tr>
             ))}
           </MiniTable>

@@ -94,7 +94,10 @@ export interface SalesOrder {
   status: 'open' | 'closed' | 'cancelled';
   /** the ship-to partner code, never a customer name */
   ship_to: string | null;
+  updated_at?: string | null;
 }
+
+export type SalesOrderChange = Partial<Pick<SalesOrder, 'tons' | 'due_date' | 'status' | 'ship_to'>>;
 
 /** POST /api/v1/forecasts/from-engine */
 export interface EngineForecastReport {

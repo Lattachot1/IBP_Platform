@@ -116,28 +116,27 @@ describe('product lines in the Gantt tooltip', () => {
 });
 
 describe('useOptimizePlan with planning data', () => {
-  it('sends use_planning_data and blocks hand edits on the result', async () => {
+  it('always plans the actual orders and sends edited monthly demand', async () => {
     fetchMock.mockImplementation(async (url: string, init: RequestInit) => {
+      if (url.includes('/product-demand-grid')) return new Response('[]');
+      if (url.endsWith('/catalog')) return new Response('{"groups":[]}');
       expect(url).toBe(`${API_BASE_URL}/api/v1/optimize`);
-      const body = JSON.parse(String(init.body));
-      const result = body.use_planning_data ? { ...SAMPLE_PLAN, mode: 'cspat', planning } : { ...SAMPLE_PLAN, mode: 'cspat' };
-      return new Response(JSON.stringify(result), { status: 200 });
+      expect(JSON.parse(String(init.body)).use_planning_data).toBe(true);
+      return new Response(JSON.stringify({ ...SAMPLE_PLAN, mode: 'cspat', planning }), { status: 200 });
     });
     const { result } = renderHook(() => useOptimizePlan());
-    // The page opens on the bundled sample and does not solve on its own.
     expect(result.current.phase).toBe('sample');
-    expect(result.current.view?.mode).toBe('sample');
     expect(fetchMock.mock.calls.some((c) => c[0] === `${API_BASE_URL}/api/v1/optimize`)).toBe(false);
     await act(() => result.current.run());
     await waitFor(() => expect(result.current.phase).toBe('ok'));
-    expect(result.current.canEdit).toBe(true);
 
-    act(() => result.current.patch({ usePlanningData: true }));
+    const [month] = result.current.demand.months;
+    act(() => result.current.demand.update(month, '990101', '1250.5'));
     expect(result.current.unapplied).toBe(true);
     await act(() => result.current.run());
-    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1].body)).use_planning_data).toBe(true);
+    expect(JSON.parse(String(fetchMock.mock.calls.at(-1)?.[1].body)).monthly_product_demand)
+      .toEqual({ [month]: { '990101': 1250.5 } });
     expect(result.current.data?.planning?.kpis.orders_late).toBe(1);
     expect(result.current.canEdit).toBe(true);
-    expect(result.current.editBlockedReason).toBeNull();
   });
 });

@@ -36,6 +36,7 @@ except ImportError:  # pyyaml missing → the sample fallback keeps the API aliv
 
 from optimization import planning, product_split
 from optimization.reactor import boundary_checks
+from optimization.schemas import MAX_HORIZON_DAYS
 from optimization.sample_plan import (
     ASSUMPTIONS,
     CHECKS,
@@ -227,7 +228,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     holidays.update(h for h in (req.get("holidays") or []) if h)
     penalty = OBJ_CHANGEOVER_PENALTY.get(req.get("objective") or "maximize_fulfilled", 2)
 
-    H = max(7, min(120, int(req.get("horizon_days") or 28)))
+    H = max(7, min(MAX_HORIZON_DAYS, int(req.get("horizon_days") or 28)))
 
     requested = req.get("demand") or {}
     demand = {}
@@ -249,7 +250,7 @@ def _solve_cspat(cfg: dict, req: dict, started: float) -> dict:
     plan_inputs = None
     if req.get("use_planning_data"):
         qc_days = int((cfg.get("planning") or {}).get("qc_days", 5))
-        plan_inputs = planning.load_inputs(grades, start, H, qc_days)
+        plan_inputs = planning.load_inputs(grades, start, H, qc_days, req.get("monthly_product_demand"))
         demand = planning.group_requirements(plan_inputs, grades)
 
     initial = req.get("initial") or {}
