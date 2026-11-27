@@ -20,7 +20,7 @@ import re
 from datetime import date
 from typing import List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Path, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -28,7 +28,10 @@ from pydantic import BaseModel, Field
 from optimization.engine import plant_groups
 from optimization.planning import product_demand_grid
 from planning_data import imports, products, stock_workbook, store
-from planning_data.records import Forecast, QcLot, SalesOrder, StockAdjustment, StockSnapshot
+from planning_data.market_aliases import codespec_aliases
+from planning_data.records import (
+    Forecast, QcLot, SalesOrder, SalesOrderBatch, SalesOrderChange, StockAdjustment, StockSnapshot,
+)
 from planning_data.sql import StoreUnavailable, WriteRejected
 
 log = logging.getLogger("ibp.api.planning")
@@ -148,6 +151,42 @@ async def handle_import_sales_orders(request: Request, dry_run: bool = False):
     return await run_in_threadpool(run)
 
 
+@router.post("/api/v1/imports/sales-orders/batch")
+def handle_sales_order_batch(batch: SalesOrderBatch, dry_run: bool = False):
+    """Upsert a JSON batch by order and item, atomically and with source timestamps."""
+    products_by_material = _product_index()
+    aliases = codespec_aliases()
+    errors, records, seen, source_times = [], [], set(), {}
+    for index, item in enumerate(batch.orders):
+        key = (item.order_no.casefold(), item.item_no)
+        material = item.material_no.upper()
+        material = aliases.get(material, material)
+        if key in seen:
+            errors.append({"loc": ["body", "orders", index, "item_no"], "msg": "duplicate order and item"})
+        if material not in products_by_material:
+            errors.append({
+                "loc": ["body", "orders", index, "material_no"],
+                "msg": f"unknown material {material}; add it to the product master first",
+            })
+        seen.add(key)
+        records.append(SalesOrder(
+            order_no=item.order_no, item_no=item.item_no, material_no=material,
+            tons=float(item.tons), shipped_tons=float(item.shipped_tons), due_date=item.due_date,
+            status=item.status, ship_to=item.ship_to,
+        ))
+        if item.source_updated_at is not None:
+            source_times[key] = item.source_updated_at
+    if errors:
+        raise HTTPException(status_code=422, detail=errors)
+    try:
+        result = store.get_store().upsert_sales_orders(records, dry_run=dry_run, source_times=source_times)
+    except WriteRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except StoreUnavailable:
+        raise _unavailable("sales order batch could not be imported")
+    return {"dry_run": dry_run, "inserted": result.inserted, "updated": result.updated, "skipped": result.skipped}
+
+
 @router.post("/api/v1/imports/forecasts", openapi_extra=CSV_BODY)
 async def handle_import_forecasts(request: Request, dry_run: bool = False, updated_by: str = _editor()):
     """Monthly forecast per product group (GroupCode, ForecastMonth, Source, Tons),
@@ -213,6 +252,27 @@ def handle_read_sales_orders(status: Optional[Literal["open", "closed", "cancell
         return store.get_store().sales_orders(status, due_from, due_to)
     except StoreUnavailable:
         raise _unavailable("could not load sales orders")
+
+
+@router.patch("/api/v1/sales-orders/{order_no:path}/{item_no}", response_model=SalesOrder)
+def handle_update_sales_order(
+    change: SalesOrderChange,
+    order_no: str = Path(min_length=1, max_length=20),
+    item_no: int = Path(gt=0, le=2_147_483_647),
+):
+    """Edit an existing order item while keeping shipped tons and its identity."""
+    changes = change.model_dump(exclude_unset=True)
+    if "tons" in changes:
+        changes["tons"] = float(changes["tons"])
+    try:
+        order = store.get_store().update_sales_order(order_no, item_no, changes)
+    except WriteRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except StoreUnavailable:
+        raise _unavailable("sales order could not be updated")
+    if order is None:
+        raise HTTPException(status_code=404, detail="Sales order item not found")
+    return order
 
 
 @router.get("/api/v1/forecasts", response_model=List[Forecast])

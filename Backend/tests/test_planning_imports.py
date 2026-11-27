@@ -6,7 +6,7 @@ store; the SQL store is exercised against a fake connection (CI has no
 SQL Server).
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -112,6 +112,85 @@ def test_sales_orders_import_and_open_tons():
 
 SHIP_TO_HEADER = ("Sales Order Number,Sales Order Item,Material Number,Order Qty,Req. Delivery Date,"
                   "Ship-to Code\n")
+
+
+def batch(*items, **params):
+    return client.post("/api/v1/imports/sales-orders/batch", json={"orders": items}, params=params)
+
+
+def batch_order(**overrides):
+    return {
+        "order_no": "SO1001", "item_no": 20, "material_no": "990101", "tons": 180,
+        "shipped_tons": 40, "due_date": "2026-11-23", "status": "open", "ship_to": "P100",
+        **overrides,
+    }
+
+
+def test_sales_order_batch_preview_and_timed_replay():
+    first = batch_order(source_updated_at="2026-11-25T09:00:00+07:00")
+    second = batch_order(item_no=30, source_updated_at="2026-11-25T09:00:00+07:00")
+    assert batch(first, second, dry_run=True).json() == {
+        "dry_run": True, "inserted": 2, "updated": 0, "skipped": 0,
+    }
+    assert client.get("/api/v1/sales-orders").json() == []
+    assert batch(first, second).json() == {"dry_run": False, "inserted": 2, "updated": 0, "skipped": 0}
+    replay = batch_order(tons=190, source_updated_at="2026-11-25T02:00:00Z")
+    assert batch(replay).json()["skipped"] == 1
+    newer = batch_order(tons=200, source_updated_at="2026-11-25T02:01:00Z")
+    assert batch(newer).json()["updated"] == 1
+    orders = client.get("/api/v1/sales-orders").json()
+    assert [(order["item_no"], order["tons"]) for order in orders] == [(20, 200), (30, 180)]
+
+
+def test_sales_order_batch_rejects_the_whole_request_on_invalid_or_duplicate_item():
+    good = batch_order()
+    bad_items = [
+        (batch_order(item_no=30, shipped_tons=181), ["body", "orders", 1]),
+        (batch_order(item_no=30, material_no="UNKNOWN"), ["body", "orders", 1, "material_no"]),
+        (batch_order(order_no="so1001"), ["body", "orders", 1, "item_no"]),
+    ]
+    for bad, loc in bad_items:
+        response = batch(good, bad)
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"][0]["loc"] == loc
+        assert client.get("/api/v1/sales-orders").json() == []
+
+
+def test_sales_order_edit_uses_latest_version_and_updates_the_planning_floor(monkeypatch):
+    now = datetime(2026, 11, 26, 4, tzinfo=timezone.utc)
+    monkeypatch.setattr(store, "_now", lambda: now)
+    assert batch(batch_order(source_updated_at="2026-11-26T03:00:00Z")).status_code == 200
+    path = "/api/v1/sales-orders/SO1001/20"
+    response = client.patch(path, json={"tons": 190, "due_date": "2026-12-15", "ship_to": None})
+    assert response.status_code == 200, response.text
+    updated = response.json()
+    assert (updated["tons"], updated["shipped_tons"], updated["open_tons"], updated["ship_to"]) == (190, 40, 150, None)
+    assert updated["due_date"] == "2026-12-15"
+    assert batch(batch_order(source_updated_at="2026-11-26T03:30:00Z")).json()["skipped"] == 1
+
+    grid = client.get("/api/v1/product-demand-grid", params={"start_month": "2026-11", "months": 2}).json()
+    product = next(row for row in grid if row["material_no"] == "990101")
+    assert [month["ordered_tons"] for month in product["months"]] == [0, 190]
+
+    body = ORDER_HEADER + "SO1001,20,990101,x,50001,9001,210,40,TO,2026/12/19,Open\n"
+    assert post("sales-orders", body).json()["updated"] == 1
+    assert client.get("/api/v1/sales-orders").json()[0]["tons"] == 210
+    assert client.patch(path, json={"tons": 220}).json()["tons"] == 220
+    newest = batch_order(tons=240, due_date="2026-12-21", source_updated_at="2026-11-26T05:00:00Z")
+    assert batch(newest).json()["updated"] == 1
+    assert client.get("/api/v1/sales-orders").json()[0]["tons"] == 240
+
+
+def test_sales_order_edit_rejects_invalid_or_missing_items():
+    assert batch(batch_order()).status_code == 200
+    path = "/api/v1/sales-orders/SO1001/20"
+    for change in ({}, {"tons": 39}, {"due_date": None}, {"shipped_tons": 12}):
+        assert client.patch(path, json=change).status_code == 422
+    assert client.patch("/api/v1/sales-orders/SO1001/30", json={"tons": 210}).status_code == 404
+    assert client.get("/api/v1/sales-orders").json()[0]["tons"] == 180
+    assert batch(batch_order(order_no="SO/1001")).status_code == 200
+    response = client.patch("/api/v1/sales-orders/SO%2F1001/20", json={"tons": 210})
+    assert response.status_code == 200 and response.json()["order_no"] == "SO/1001"
 
 
 def test_sales_order_ship_to_code_is_stored_and_updated():

@@ -36,13 +36,36 @@ class WriteResult:
     inserted: int = 0
     updated: int = 0
     replaced: int = 0      # stock only: rows of the same date that were replaced
+    skipped: int = 0       # timed sales orders older than or equal to the saved version
 
     def as_dict(self) -> dict:
-        return asdict(self)
+        result = asdict(self)
+        if not self.skipped:
+            result.pop("skipped")
+        return result
 
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _order_key(order_no: str, item_no: int) -> tuple[str, int]:
+    return order_no.casefold(), item_no
+
+
+def _patched_order(current: SalesOrder, changes: dict) -> SalesOrder:
+    updated = current.model_copy(update=changes)
+    if updated.tons < current.shipped_tons:
+        raise WriteRejected(f"Order quantity cannot be below the {current.shipped_tons:g} t already shipped.")
+    return updated
+
+
+def _sales_order_from_row(row: dict) -> SalesOrder:
+    return SalesOrder(
+        order_no=row["OrderNo"], item_no=row["ItemNo"], material_no=row["MaterialNo"],
+        tons=float(row["Tons"]), shipped_tons=float(row["ShippedTons"]), due_date=row["DueDate"],
+        status=row["Status"], ship_to=row["ShipTo"], updated_at=utc(row["UpdatedAt"]),
+    )
 
 
 def _in_range(value: date, start: Optional[date], end: Optional[date]) -> bool:
@@ -59,6 +82,7 @@ class MemoryPlanningStore:
         self._adjusts = {}      # material_no -> StockAdjustment
         self._lots = {}         # lot_no -> QcLot
         self._orders = {}       # (order_no, item_no) -> SalesOrder
+        self._order_versions = {}  # same key -> latest effective UTC timestamp
         self._forecasts = {}    # (group, month, source) -> Forecast
 
     # -- writes ---------------------------------------------------------------
@@ -100,8 +124,42 @@ class MemoryPlanningStore:
     def upsert_qc_lots(self, lots: List[QcLot], dry_run=False) -> WriteResult:
         return self._upsert(self._lots, lots, lambda r: r.lot_no, dry_run)
 
-    def upsert_sales_orders(self, orders: List[SalesOrder], dry_run=False) -> WriteResult:
-        return self._upsert(self._orders, orders, lambda r: (r.order_no, r.item_no), dry_run)
+    def upsert_sales_orders(self, orders: List[SalesOrder], dry_run=False,
+                            source_times: Optional[dict[tuple, datetime]] = None) -> WriteResult:
+        result = WriteResult()
+        with self._lock:
+            for order in orders:
+                key = _order_key(order.order_no, order.item_no)
+                source_time = (source_times or {}).get(key)
+                current_version = self._order_versions.get(key)
+                if source_time is not None and current_version is not None and source_time <= current_version:
+                    result.skipped += 1
+                    continue
+                current = self._orders.get(key)
+                if current is None:
+                    result.inserted += 1
+                else:
+                    result.updated += 1
+                if not dry_run:
+                    now = _now()
+                    self._order_versions[key] = source_time or max(now, current_version or now)
+                    self._orders[key] = order.model_copy(update={
+                        "updated_at": now, "order_no": current.order_no if current else order.order_no,
+                    })
+        return result
+
+    def update_sales_order(self, order_no: str, item_no: int, changes: dict) -> Optional[SalesOrder]:
+        key = _order_key(order_no, item_no)
+        with self._lock:
+            current = self._orders.get(key)
+            if current is None:
+                return None
+            updated = _patched_order(current, changes)
+            now = _now()
+            self._order_versions[key] = max(now, self._order_versions.get(key, now))
+            updated = updated.model_copy(update={"updated_at": now})
+            self._orders[key] = updated
+            return updated
 
     def upsert_forecasts(self, forecasts: List[Forecast], updated_by: str, dry_run=False) -> WriteResult:
         stamped = [f.model_copy(update={"updated_by": updated_by}) for f in forecasts]
@@ -182,12 +240,20 @@ OUTPUT $action;
 _MERGE_SALES_ORDER = """
 MERGE dbo.SalesOrders WITH (HOLDLOCK) AS t
 USING (SELECT %s AS OrderNo, %s AS ItemNo, %s AS MaterialNo, %s AS Tons, %s AS ShippedTons,
-              %s AS DueDate, %s AS Status, %s AS ShipTo) AS s
+              %s AS DueDate, %s AS Status, %s AS ShipTo,
+              CAST(%s AS DATETIME2) AS SourceUpdatedAt, SYSUTCDATETIME() AS WrittenAt) AS s
 ON t.OrderNo = s.OrderNo AND t.ItemNo = s.ItemNo
-WHEN MATCHED THEN UPDATE SET MaterialNo = s.MaterialNo, Tons = s.Tons, ShippedTons = s.ShippedTons,
-    DueDate = s.DueDate, Status = s.Status, ShipTo = s.ShipTo, UpdatedAt = SYSUTCDATETIME()
-WHEN NOT MATCHED THEN INSERT (OrderNo, ItemNo, MaterialNo, Tons, ShippedTons, DueDate, Status, ShipTo)
-    VALUES (s.OrderNo, s.ItemNo, s.MaterialNo, s.Tons, s.ShippedTons, s.DueDate, s.Status, s.ShipTo)
+WHEN MATCHED AND (s.SourceUpdatedAt IS NULL OR s.SourceUpdatedAt > COALESCE(t.EffectiveUpdatedAt, t.UpdatedAt))
+THEN UPDATE SET MaterialNo = s.MaterialNo, Tons = s.Tons, ShippedTons = s.ShippedTons,
+    DueDate = s.DueDate, Status = s.Status, ShipTo = s.ShipTo, UpdatedAt = s.WrittenAt,
+    EffectiveUpdatedAt = CASE
+        WHEN s.SourceUpdatedAt IS NOT NULL THEN s.SourceUpdatedAt
+        WHEN COALESCE(t.EffectiveUpdatedAt, t.UpdatedAt) > s.WrittenAt THEN COALESCE(t.EffectiveUpdatedAt, t.UpdatedAt)
+        ELSE s.WrittenAt END
+WHEN NOT MATCHED THEN INSERT (OrderNo, ItemNo, MaterialNo, Tons, ShippedTons, DueDate, Status, ShipTo,
+                              UpdatedAt, EffectiveUpdatedAt)
+    VALUES (s.OrderNo, s.ItemNo, s.MaterialNo, s.Tons, s.ShippedTons, s.DueDate, s.Status, s.ShipTo,
+            s.WrittenAt, COALESCE(s.SourceUpdatedAt, s.WrittenAt))
 OUTPUT $action;
 """
 
@@ -262,8 +328,10 @@ class SqlPlanningStore:
         with connection() as conn, conn.cursor() as cursor:
             for params in params_list:
                 _execute(cursor, sql, params)
-                action = cursor.fetchone()[0]
-                if action == "INSERT":
+                action = cursor.fetchone()
+                if action is None:
+                    result.skipped += 1
+                elif action[0] == "INSERT":
                     result.inserted += 1
                 else:
                     result.updated += 1
@@ -275,11 +343,39 @@ class SqlPlanningStore:
             (r.lot_no, r.material_no, r.tons, r.produced_date, r.release_date, r.status) for r in lots
         ], dry_run)
 
-    def upsert_sales_orders(self, orders: List[SalesOrder], dry_run=False) -> WriteResult:
-        return self._merge(_MERGE_SALES_ORDER, [
-            (r.order_no, r.item_no, r.material_no, r.tons, r.shipped_tons, r.due_date, r.status, r.ship_to)
-            for r in orders
-        ], dry_run)
+    def upsert_sales_orders(self, orders: List[SalesOrder], dry_run=False,
+                            source_times: Optional[dict[tuple, datetime]] = None) -> WriteResult:
+        params = []
+        for r in sorted(orders, key=lambda order: _order_key(order.order_no, order.item_no)):
+            source_time = (source_times or {}).get(_order_key(r.order_no, r.item_no))
+            timestamp = source_time.astimezone(timezone.utc).replace(tzinfo=None).isoformat() if source_time else None
+            params.append((r.order_no, r.item_no, r.material_no, r.tons, r.shipped_tons,
+                           r.due_date, r.status, r.ship_to, timestamp))
+        return self._merge(_MERGE_SALES_ORDER, params, dry_run)
+
+    def update_sales_order(self, order_no: str, item_no: int, changes: dict) -> Optional[SalesOrder]:
+        with connection() as conn, conn.cursor(as_dict=True) as cursor:
+            cursor.execute(
+                "SELECT OrderNo, ItemNo, MaterialNo, Tons, ShippedTons, DueDate, Status, ShipTo, UpdatedAt "
+                "FROM dbo.SalesOrders WITH (UPDLOCK, HOLDLOCK) WHERE OrderNo = %s AND ItemNo = %s;",
+                (order_no, item_no),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            updated = _patched_order(_sales_order_from_row(row), changes)
+            _execute(cursor, """
+                DECLARE @written DATETIME2 = SYSUTCDATETIME();
+                UPDATE dbo.SalesOrders
+                SET Tons = %s, DueDate = %s, Status = %s, ShipTo = %s, UpdatedAt = @written,
+                    EffectiveUpdatedAt = CASE WHEN COALESCE(EffectiveUpdatedAt, UpdatedAt) > @written
+                                              THEN COALESCE(EffectiveUpdatedAt, UpdatedAt) ELSE @written END
+                OUTPUT inserted.UpdatedAt
+                WHERE OrderNo = %s AND ItemNo = %s;
+                """, (updated.tons, updated.due_date, updated.status, updated.ship_to, order_no, item_no))
+            updated_at = utc(cursor.fetchone()["UpdatedAt"])
+            conn.commit()
+            return updated.model_copy(update={"updated_at": updated_at})
 
     def upsert_forecasts(self, forecasts: List[Forecast], updated_by: str, dry_run=False) -> WriteResult:
         return self._merge(_MERGE_FORECAST, [
@@ -358,9 +454,7 @@ class SqlPlanningStore:
         with connection() as conn, conn.cursor(as_dict=True) as cursor:
             cursor.execute(sql, tuple(params) or None)
             rows = cursor.fetchall()
-        return [SalesOrder(order_no=r["OrderNo"], item_no=r["ItemNo"], material_no=r["MaterialNo"],
-                           tons=float(r["Tons"]), shipped_tons=float(r["ShippedTons"]), due_date=r["DueDate"],
-                           status=r["Status"], ship_to=r["ShipTo"], updated_at=utc(r["UpdatedAt"])) for r in rows]
+        return [_sales_order_from_row(row) for row in rows]
 
     def forecasts(self, month_from=None, month_to=None) -> List[Forecast]:
         where, params = [], []

@@ -37,6 +37,7 @@ const views = (overrides: Partial<PlanningViewsState> = {}): PlanningViewsState 
   error: null,
   refresh: vi.fn().mockResolvedValue(undefined),
   setStockAdjustment: vi.fn().mockResolvedValue(null),
+  saveSalesOrder: vi.fn().mockResolvedValue(null),
   ...overrides,
 });
 
@@ -157,6 +158,21 @@ describe('ProductMaster', () => {
     ] });
     expect(within(row('990101')).getByText('300')).toBeTruthy();
     expect(within(row('990101')).getByText(/next due 2026-11-12/)).toBeTruthy();
+  });
+
+  it('edits an existing order item and submits only changed fields', async () => {
+    const saveSalesOrder = vi.fn().mockResolvedValue(null);
+    renderMaster({ saveSalesOrder });
+    fireEvent.click(within(row('990101')).getByRole('button', { name: 'Details of 990101' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edit sales order SO1/1' }));
+    expect(screen.getByText('100 t already shipped')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('Due date'), { target: { value: '2026-12-15' } });
+    fireEvent.change(screen.getByLabelText('Ship-to code'), { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save order' }));
+    await waitFor(() => expect(saveSalesOrder).toHaveBeenCalledWith('SO1', 1, {
+      due_date: '2026-12-15', ship_to: null,
+    }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save order' })).toBeNull());
   });
 
   it('expands a row into its QC lots, sales orders and group forecast', () => {

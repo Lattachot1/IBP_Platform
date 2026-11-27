@@ -17,6 +17,7 @@ import type {
   ProductGroup,
   QcLot,
   SalesOrder,
+  SalesOrderChange,
   SaleForecastReport,
   StockAdjustment,
   StockSnapshot,
@@ -83,6 +84,8 @@ export const setStockAdjustment = (materialNo: string, tons: number | null) =>
   putJson<StockAdjustment | null>(`/api/v1/stock-adjustments/${encodeURIComponent(materialNo)}`, { tons });
 export const getQcLots = () => getJson<QcLot[]>('/api/v1/qc-lots');
 export const getSalesOrders = () => getJson<SalesOrder[]>('/api/v1/sales-orders');
+export const updateSalesOrder = (orderNo: string, itemNo: number, change: SalesOrderChange) =>
+  patchJson<SalesOrder>(`/api/v1/sales-orders/${encodeURIComponent(orderNo)}/${itemNo}`, change);
 export const getForecasts = () => getJson<Forecast[]>('/api/v1/forecasts');
 
 /** Write the forecast engine's monthly forecast per group as 'engine' rows. */

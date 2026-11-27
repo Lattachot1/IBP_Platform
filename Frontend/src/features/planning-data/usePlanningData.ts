@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { describeFailure } from '@/lib/apiClient';
 
@@ -15,6 +15,7 @@ import {
   listGroups,
   listProducts,
   updateProduct,
+  updateSalesOrder,
   setStockAdjustment as putStockAdjustment,
 } from './api';
 import type {
@@ -27,6 +28,7 @@ import type {
   ProductGroup,
   QcLot,
   SalesOrder,
+  SalesOrderChange,
   StockSnapshot,
 } from './types';
 
@@ -179,19 +181,22 @@ export function usePlanningViews() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const refreshSequence = useRef(0);
   const refresh = useCallback(async () => {
+    const sequence = ++refreshSequence.current;
     setLoading(true);
     try {
       const [s, l, o, f] = await Promise.all([getStock(), getQcLots(), getSalesOrders(), getForecasts()]);
+      if (sequence !== refreshSequence.current) return;
       setStock(s);
       setLots(l);
       setOrders(o);
       setForecasts(f);
       setError(null);
     } catch (err) {
-      setError(describeFailure(err));
+      if (sequence === refreshSequence.current) setError(describeFailure(err));
     } finally {
-      setLoading(false);
+      if (sequence === refreshSequence.current) setLoading(false);
     }
   }, []);
 
@@ -215,7 +220,20 @@ export function usePlanningViews() {
     }
   }, []);
 
-  return { stock, lots, orders, forecasts, loading, error, refresh, setStockAdjustment };
+  const saveSalesOrder = useCallback(async (orderNo: string, itemNo: number, change: SalesOrderChange): Promise<string | null> => {
+    try {
+      const updated = await updateSalesOrder(orderNo, itemNo, change);
+      setOrders((current) => current.map((order) => (
+        order.order_no === orderNo && order.item_no === itemNo ? updated : order
+      )));
+      void refresh();
+      return null;
+    } catch (err) {
+      return describeFailure(err);
+    }
+  }, [refresh]);
+
+  return { stock, lots, orders, forecasts, loading, error, refresh, setStockAdjustment, saveSalesOrder };
 }
 
 export type PlanningViewsState = ReturnType<typeof usePlanningViews>;
